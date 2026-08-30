@@ -28,6 +28,12 @@ object SheetRenderer {
     /** How far past its original box a longer symbol may extend before it is shrunk. */
     private const val MAX_WIDTH_GROWTH = 2.4f
 
+    /** Room above a glyph-hugging box so the redrawn symbol matches the printed one. */
+    private const val TEXT_HEADROOM = 1.18f
+
+    /** How far above the page's median a symbol may be drawn, whatever its box says. */
+    private const val MAX_HEIGHT_RATIO = 1.6f
+
     /** Default marking colour, used until a page has been looked at. */
     val CONVERTED_INK: Int get() = MarkingColor.VIOLET.argb
 
@@ -97,6 +103,14 @@ object SheetRenderer {
             .filter { it.bounds.width() > 0 && it.bounds.height() > 0 }
             .sortedBy { it.bounds.left }
 
+        // Chord symbols are all one size on a page, so the median describes them. Capping
+        // against it keeps a single bad box from stamping a huge letter over the music,
+        // however it got through.
+        val sizeCap = sorted.map { it.bounds.height() }.sorted()
+            .takeIf { it.isNotEmpty() }
+            ?.let { it[it.size / 2].toFloat() * MAX_HEIGHT_RATIO * TEXT_HEADROOM }
+            ?: Float.MAX_VALUE
+
         // Colours are sampled from the untouched source, and every box is covered before
         // any text is drawn. Doing it in one pass let a later chord's cover rectangle clip
         // the tail of the symbol drawn just before it, which is how a long replacement such
@@ -142,7 +156,11 @@ object SheetRenderer {
 
             textPaint.color = plan.ink
             textPaint.textSize = fittingTextSize(
-                textPaint, plan.replacement.replacement, available, bounds.height().toFloat(),
+                paint = textPaint,
+                text = plan.replacement.replacement,
+                maxWidth = available,
+                boxHeight = bounds.height().toFloat(),
+                sizeCap = sizeCap,
             )
 
             val metrics = textPaint.fontMetrics
@@ -200,9 +218,10 @@ object SheetRenderer {
         text: String,
         maxWidth: Float,
         boxHeight: Float,
+        sizeCap: Float,
     ): Float {
-        // ML Kit's box hugs the glyphs, so the drawn size needs a little headroom above it.
-        var size = boxHeight * 1.18f
+        // The recogniser's box hugs the glyphs, so the drawn size needs a little headroom.
+        var size = (boxHeight * TEXT_HEADROOM).coerceAtMost(sizeCap)
         paint.textSize = size
         val width = paint.measureText(text)
         if (width > maxWidth && width > 0f) {

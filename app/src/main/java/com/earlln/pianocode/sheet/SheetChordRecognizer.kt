@@ -87,7 +87,7 @@ class SheetChordRecognizer {
             }
         }
 
-        val merged = merge(found)
+        val merged = dropOddSizes(merge(found))
         var index = 0
         val detected = merged.filter { it.chord != null }.map { candidate ->
             DetectedChord(
@@ -223,6 +223,32 @@ class SheetChordRecognizer {
         else -> candidate.confidence > existing.confidence
     }
 
+    /**
+     * Drops readings whose box is the wrong size for a chord symbol.
+     *
+     * Every chord on a printed page is set in the same size, so the median height of what
+     * was found describes them all. A reading far off that median is not a chord: it is a
+     * note head, a slur or a stretch of staff that happened to resolve into a letter. Left
+     * in, one of those is converted and written back at the size of its own box, stamping a
+     * huge letter across the music.
+     */
+    private fun dropOddSizes(candidates: List<Candidate>): List<Candidate> {
+        val chords = candidates.filter { it.chord != null }
+        if (chords.size < MIN_FOR_SIZE_CHECK) return candidates
+
+        val median = chords.map { it.bounds.height() }.sorted()[chords.size / 2]
+        if (median <= 0) return candidates
+
+        return candidates.map { candidate ->
+            val height = candidate.bounds.height()
+            val plausible = height >= median * MIN_HEIGHT_RATIO &&
+                height <= median * MAX_HEIGHT_RATIO
+            // Kept as a missed candidate rather than dropped, so an over-eager filter still
+            // shows up in the count of what stayed in the original key.
+            if (plausible) candidate else candidate.copy(chord = null)
+        }
+    }
+
     /** True when two boxes cover mostly the same ink, so they are the same symbol. */
     private fun overlaps(a: Rect, b: Rect): Boolean {
         val width = minOf(a.right, b.right) - maxOf(a.left, b.left)
@@ -238,5 +264,12 @@ class SheetChordRecognizer {
     private companion object {
         /** Width each tile is enlarged towards before it is read. */
         const val TILE_TARGET_WIDTH = 2200
+
+        /** Below this many readings the median says too little to filter on. */
+        const val MIN_FOR_SIZE_CHECK = 5
+
+        /** How far a chord's height may sit from the page's median and still be one. */
+        const val MIN_HEIGHT_RATIO = 0.55f
+        const val MAX_HEIGHT_RATIO = 1.8f
     }
 }

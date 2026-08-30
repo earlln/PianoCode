@@ -8,6 +8,22 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-30
+
+1.3.0에서 같은 악보 인식이 41개 → **44개**(전체 45개)로 올라갔습니다.
+대신 오인식 하나가 눈에 띄게 드러났습니다.
+
+### 고쳐짐 (Fixed)
+
+- **오선 위에 큰 글자가 찍히던 문제.** 음표나 오선 일부가 글자로 잘못 읽히면 그것도
+  코드로 변환되어 악보 위에 그려졌습니다. 게다가 글자 크기를 인식된 상자 높이에
+  그대로 맞추기 때문에, 상자가 큰 오인식은 **음악을 가릴 만큼 큰 글자**가 됐습니다.
+  - 인쇄된 악보의 코드 심볼은 모두 같은 크기입니다. 이제 찾아낸 코드들의 **중앙값 높이**를
+    기준으로, 거기서 크게 벗어나는 것은 코드가 아니라고 보고 제외합니다.
+    제외된 것은 `원래 조성으로 남는 부분` 개수에 포함되어 알려집니다.
+  - 그려질 때도 중앙값 기준으로 크기 상한을 둡니다. 잘못된 상자가 걸러지지 않고
+    통과하더라도 악보를 덮어쓸 만큼 커지지 않습니다.
+
 ## [1.3.0] - 2026-08-30
 
 1.2.0에서 같은 악보의 인식이 45개 중 32개 → **41개**로 올라갔습니다.
@@ -151,7 +167,8 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 - 글자 인식은 ML Kit의 기기 내 처리 모델을 사용합니다. 사진은 서버로 전송되지 않습니다.
 - 최소 지원 버전은 Android 7.0(API 24), 타깃은 Android 15(API 35)입니다.
 
-[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/earlln/PianoCode/releases/tag/v1.3.1
 [1.3.0]: https://github.com/earlln/PianoCode/releases/tag/v1.3.0
 [1.2.0]: https://github.com/earlln/PianoCode/releases/tag/v1.2.0
 [1.1.1]: https://github.com/earlln/PianoCode/releases/tag/v1.1.1
