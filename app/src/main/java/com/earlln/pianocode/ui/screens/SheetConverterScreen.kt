@@ -273,7 +273,8 @@ fun SheetConverterScreen(
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "악보에서 코드를 읽는 중…",
+                        "악보에서 코드를 읽는 중… 페이지를 여러 번 나눠 읽기 때문에 " +
+                            "몇 초 걸립니다.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -376,6 +377,7 @@ fun SheetConverterScreen(
                     missedCount = state.missed.size,
                     disabledCount = state.disabledIds.size,
                     missedSamples = state.missed.take(6).map { it.text },
+                    sourceWidth = state.sourceBitmap?.width ?: 0,
                     onEnableAll = viewModel::enableAll,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
@@ -616,6 +618,7 @@ private fun LeftBehindWarning(
     missedCount: Int,
     disabledCount: Int,
     missedSamples: List<String>,
+    sourceWidth: Int,
     onEnableAll: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -667,6 +670,16 @@ private fun LeftBehindWarning(
                 )
             }
 
+            if (sourceWidth in 1..LOW_RESOLUTION_WIDTH) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "이미지 가로가 ${sourceWidth}px입니다. 코드 심볼이 작게 찍혀 인식률이 " +
+                        "떨어질 수 있습니다. 화면 캡처보다 원본 악보 파일이나 " +
+                        "가까이서 찍은 사진이 훨씬 잘 읽힙니다.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
             Spacer(Modifier.height(8.dp))
             Text(
                 "오선보의 조표와 음표는 바뀌지 않습니다. 코드 심볼만 옮겨 적습니다.",
@@ -682,6 +695,9 @@ private fun LeftBehindWarning(
     }
 }
 
+/** Below this width a page's chord symbols are too small to read reliably. */
+private const val LOW_RESOLUTION_WIDTH = 1600
+
 @Composable
 private fun HowToCard(modifier: Modifier = Modifier) {
     Card(
@@ -696,6 +712,7 @@ private fun HowToCard(modifier: Modifier = Modifier) {
             Spacer(Modifier.height(10.dp))
             listOf(
                 "코드 심볼(C, Am7, F#m7b5)이 또렷하게 보이도록 찍어 주세요.",
+                "가로 1600px 이상이면 좋습니다. 화면 캡처보다 원본 파일이나 가까이서 찍은 사진이 유리합니다.",
                 "악보를 정면에서, 그림자 없이 밝게 촬영하면 정확도가 올라갑니다.",
                 "인쇄된 악보가 손글씨보다 훨씬 잘 인식됩니다.",
                 "한 번에 한 페이지씩 변환하는 것이 좋습니다.",

@@ -68,11 +68,11 @@ class SheetChordRecognizer {
      */
     suspend fun recognize(bitmap: Bitmap): SheetScan {
         val found = mutableListOf<Candidate>()
-        collectInto(found, bitmap, offsetY = 0, scale = 1f)
+        collectInto(found, bitmap, offset = Rect(0, 0, bitmap.width, bitmap.height), scale = 1f)
 
-        for (band in bandsOf(bitmap)) {
-            val slice = Bitmap.createBitmap(bitmap, 0, band.top, bitmap.width, band.height())
-            val scale = bandScaleFor(bitmap)
+        for (tile in tilesOf(bitmap)) {
+            val slice = Bitmap.createBitmap(bitmap, tile.left, tile.top, tile.width(), tile.height())
+            val scale = scaleFor(tile)
             val enlarged = if (scale == 1f) slice else Bitmap.createScaledBitmap(
                 slice,
                 (slice.width * scale).toInt(),
@@ -80,7 +80,7 @@ class SheetChordRecognizer {
                 true,
             )
             try {
-                collectInto(found, enlarged, offsetY = band.top, scale = scale)
+                collectInto(found, enlarged, offset = tile, scale = scale)
             } finally {
                 if (enlarged != slice) enlarged.recycle()
                 slice.recycle()
@@ -116,26 +116,38 @@ class SheetChordRecognizer {
         val confidence: Float,
     )
 
-    /** How much to enlarge a band so its chord symbols reach a legible size. */
-    private fun bandScaleFor(bitmap: Bitmap): Float =
-        if (bitmap.width >= 3000) 1.5f else 2f
+    /** Enlarges a tile towards the size the recogniser reads small print most reliably at. */
+    private fun scaleFor(tile: Rect): Float =
+        (TILE_TARGET_WIDTH.toFloat() / tile.width()).coerceIn(1f, 3f)
 
-    /** Overlapping horizontal bands, roughly one per system, so no seam splits a symbol. */
-    private fun bandsOf(bitmap: Bitmap): List<Rect> {
-        val bandCount = (bitmap.height / 500).coerceIn(3, 10)
+    /**
+     * The page cut into overlapping tiles: a band per system, each split left and right.
+     *
+     * A full-width band enlarged to fit the recogniser's window leaves each chord symbol
+     * only a handful of pixels; halving the width doubles what every glyph gets. Tiles
+     * overlap on both axes so a symbol sitting on a seam is whole in the neighbouring tile.
+     */
+    private fun tilesOf(bitmap: Bitmap): List<Rect> {
+        val bandCount = (bitmap.height / 420).coerceIn(3, 12)
         val step = bitmap.height / bandCount
-        val overlap = (step * 0.2f).toInt()
-        return (0 until bandCount).map { index ->
-            val top = (index * step - overlap).coerceAtLeast(0)
-            val bottom = ((index + 1) * step + overlap).coerceAtMost(bitmap.height)
-            Rect(0, top, bitmap.width, bottom)
-        }.filter { it.height() > 0 }
+        val overlapY = (step * 0.2f).toInt()
+        val halfWidth = bitmap.width / 2
+        val overlapX = (halfWidth * 0.12f).toInt()
+
+        return (0 until bandCount).flatMap { index ->
+            val top = (index * step - overlapY).coerceAtLeast(0)
+            val bottom = ((index + 1) * step + overlapY).coerceAtMost(bitmap.height)
+            listOf(
+                Rect(0, top, (halfWidth + overlapX).coerceAtMost(bitmap.width), bottom),
+                Rect((halfWidth - overlapX).coerceAtLeast(0), top, bitmap.width, bottom),
+            )
+        }.filter { it.width() > 0 && it.height() > 0 }
     }
 
     private suspend fun collectInto(
         into: MutableList<Candidate>,
         bitmap: Bitmap,
-        offsetY: Int,
+        offset: Rect,
         scale: Float,
     ) {
         val result: Text = suspendCoroutine { continuation ->
@@ -164,10 +176,10 @@ class SheetChordRecognizer {
                     into += Candidate(
                         text = text,
                         bounds = Rect(
-                            (box.left / scale).toInt(),
-                            (box.top / scale).toInt() + offsetY,
-                            (box.right / scale).toInt(),
-                            (box.bottom / scale).toInt() + offsetY,
+                            (box.left / scale).toInt() + offset.left,
+                            (box.top / scale).toInt() + offset.top,
+                            (box.right / scale).toInt() + offset.left,
+                            (box.bottom / scale).toInt() + offset.top,
                         ),
                         chord = if (isChord) {
                             ChordParser.parse(text, requireUppercaseRoot = true)
@@ -222,4 +234,9 @@ class SheetChordRecognizer {
     }
 
     fun close() = recognizer.close()
+
+    private companion object {
+        /** Width each tile is enlarged towards before it is read. */
+        const val TILE_TARGET_WIDTH = 2200
+    }
 }

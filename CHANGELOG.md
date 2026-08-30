@@ -8,6 +8,31 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-30
+
+1.2.0에서 같은 악보의 인식이 45개 중 32개 → **41개**로 올라갔습니다.
+남은 4개를 좁히기 위해 인식 해상도를 더 확보했습니다.
+
+### 고쳐짐 (Fixed)
+
+- **작업 해상도를 2400px → 3200px로 올렸습니다.** 원본을 줄인 뒤 다시 확대하면
+  없는 화소를 만들어낼 뿐이라, 애초에 버리지 않도록 바꿨습니다.
+- **가로 띠를 좌우로 한 번 더 나눠 읽습니다.** 페이지 폭 전체를 한 조각으로 읽으면
+  확대해도 글자 하나에 돌아가는 화소가 부족합니다. 절반 폭으로 자르면 같은 심볼이
+  두 배 크기로 읽힙니다. 조각은 가로·세로 모두 겹쳐 잘라, 경계에 걸친 코드가
+  옆 조각에서 온전히 잡힙니다.
+
+### 추가됨 (Added)
+
+- **해상도 경고.** 이미지 가로가 1600px 미만이면 코드 심볼이 작아 인식률이 떨어진다고
+  미리 알려 줍니다. 화면 캡처는 원본 파일이나 가까이 찍은 사진보다 불리합니다.
+- 인식에 몇 초 걸린다는 안내를 진행 표시에 넣었습니다.
+
+### 참고 (Notes)
+
+- 조각을 나눠 여러 번 읽으므로 **변환 시간이 늘어납니다.** 정확도와 맞바꾼 부분입니다.
+- 큰 페이지를 다루기 위해 `largeHeap`을 켰습니다.
+
 ## [1.2.0] - 2026-08-30
 
 실제 악보(손경민 `충만`, A → G)를 변환해 보니 코드 45개 중 **32개만 인식**되었고,
@@ -118,7 +143,8 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 - 글자 인식은 ML Kit의 기기 내 처리 모델을 사용합니다. 사진은 서버로 전송되지 않습니다.
 - 최소 지원 버전은 Android 7.0(API 24), 타깃은 Android 15(API 35)입니다.
 
-[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/earlln/PianoCode/releases/tag/v1.3.0
 [1.2.0]: https://github.com/earlln/PianoCode/releases/tag/v1.2.0
 [1.1.1]: https://github.com/earlln/PianoCode/releases/tag/v1.1.1
 [1.1.0]: https://github.com/earlln/PianoCode/releases/tag/v1.1.0

@@ -18,8 +18,15 @@ import java.io.FileOutputStream
 /** Loading, saving and sharing the sheet images the converter works on. */
 object ImageIo {
 
-    /** Anything larger than this is downscaled; OCR gains nothing from more pixels. */
-    const val MAX_DIMENSION = 2400
+    /**
+     * Working size for a page.
+     *
+     * Chord symbols are among the smallest text on a lead sheet, so detail thrown away here
+     * cannot be recovered by enlarging later — scaling an already-shrunk page only
+     * interpolates. Kept high enough to leave the recogniser real pixels to read, and low
+     * enough that a page and its rendered copy still fit in memory together.
+     */
+    const val MAX_DIMENSION = 3200
 
     /**
      * Decodes [uri] into a bitmap no larger than [maxDimension], rotated the way the photo
