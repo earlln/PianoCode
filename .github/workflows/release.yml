@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. v1.0.0). Must already exist."
-        required: true
+        description: "Tag to publish, e.g. v1.0.0. Leave blank to use v<VERSION_NAME> from version.properties. The tag is created at the commit this run checks out if it does not exist yet."
+        required: false
 
 permissions:
   contents: write
@@ -21,9 +21,10 @@ jobs:
     env:
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
     steps:
+      # No explicit ref: a tag push checks out the tag, a manual run checks out
+      # whichever branch it was started from.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
       - name: Set up JDK 17
@@ -40,7 +41,12 @@ jobs:
         run: |
           VERSION_NAME=$(grep '^VERSION_NAME=' version.properties | cut -d= -f2)
           VERSION_CODE=$(grep '^VERSION_CODE=' version.properties | cut -d= -f2)
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="${{ github.event.inputs.tag }}"
+            [ -n "$TAG" ] || TAG="v$VERSION_NAME"
+          fi
           echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -51,7 +57,7 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           EXPECTED="v${{ steps.version.outputs.name }}"
           if [ "$TAG" != "$EXPECTED" ]; then
-            echo "::error::Tag $TAG does not match version.properties ($EXPECTED). Bump version.properties before tagging."
+            echo "::error::Tag $TAG does not match version.properties ($EXPECTED). Bump version.properties before releasing."
             exit 1
           fi
 
@@ -104,6 +110,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
+          # Creates the tag at this commit when it does not exist yet, so a release
+          # can be cut from a manual run as well as from a tag push.
+          target_commitish: ${{ github.sha }}
           name: PianoCode ${{ steps.version.outputs.name }}
           body_path: release-notes.md
           files: ${{ steps.apk.outputs.path }}

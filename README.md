@@ -102,8 +102,13 @@ VERSION_CODE=1
 
 1. `version.properties`의 `VERSION_NAME`과 `VERSION_CODE`를 올립니다
 2. `CHANGELOG.md`에 해당 버전 항목을 추가합니다
-3. `v<버전>` 태그를 밀면 (`git tag v1.0.1 && git push origin v1.0.1`)
-   `Release` 워크플로가 태그와 `version.properties`가 일치하는지 확인하고,
+3. 릴리즈를 냅니다. 둘 중 편한 쪽을 쓰면 됩니다.
+   - `v<버전>` 태그를 밀거나 (`git tag v1.0.1 && git push origin v1.0.1`)
+   - Actions 탭에서 `Release` 워크플로를 직접 실행합니다.
+     태그를 비워 두면 `version.properties`의 값으로 `v<버전>` 태그를
+     그 커밋에 새로 만들어 줍니다. (태그를 직접 밀 수 없는 환경에서 쓰세요.)
+
+   어느 쪽이든 워크플로가 태그와 `version.properties`가 일치하는지 확인하고,
    테스트를 돌리고, APK를 빌드해 **GitHub 릴리즈에 첨부**합니다.
    릴리즈 노트는 `CHANGELOG.md`의 해당 항목에서 자동으로 뽑아 옵니다.
 
