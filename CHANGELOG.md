@@ -8,6 +8,28 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-30
+
+### 고쳐짐 (Fixed)
+
+- **한 글자짜리 코드(`A`, `D`)가 변환되지 않던 문제.** 가사 줄의 낱글자를 코드로
+  오인하지 않으려는 방어가, 글자 인식이 코드 줄과 바로 아래 가사 줄을 하나로 묶었을 때
+  역효과를 냈습니다. 병합된 줄은 단어 수가 가사 쪽으로 기울어 "가사 줄"로 판정되고,
+  그 줄의 한 글자 코드만 조용히 버려졌습니다. `E/G♯` `F♯m7` `C♯m7`처럼 두 글자 이상인
+  코드는 그대로 변환되었기 때문에, 한 악보에 두 조성이 섞이는 결과가 나왔습니다.
+  이제는 줄 전체 비율이 아니라 **연달아 코드로 읽히는 구간**을 보고 판단합니다.
+  `E/G♯`처럼 가사에 나올 리 없는 코드가 그 구간에 있거나 구간이 세 단어 이상이면
+  한 글자 코드도 함께 살립니다.
+- 판정에서 제외된 코드도 이제는 `원래 조성으로 남는 부분` 경고에 잡힙니다.
+  이전에는 이 경로만 아무 흔적 없이 버려졌습니다.
+- 글자 인식이 남기는 괄호·중괄호·물결표 등을 코드 심볼 양끝에서 더 넓게 걷어냅니다.
+
+### 바뀜 (Changed)
+
+- 코드 판별 로직을 `core-music`의 `SheetTextFilter`로 옮겨 순수 Kotlin으로 만들었습니다.
+  안드로이드 없이 단위 테스트할 수 있어, 실제 악보(손경민 `충만`)의 코드 줄이
+  가사와 병합된 상황을 그대로 재현해 검증합니다.
+
 ## [1.1.0] - 2026-08-30
 
 ### 추가됨 (Added)
@@ -71,6 +93,7 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 - 글자 인식은 ML Kit의 기기 내 처리 모델을 사용합니다. 사진은 서버로 전송되지 않습니다.
 - 최소 지원 버전은 Android 7.0(API 24), 타깃은 Android 15(API 35)입니다.
 
-[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/earlln/PianoCode/releases/tag/v1.1.1
 [1.1.0]: https://github.com/earlln/PianoCode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/earlln/PianoCode/releases/tag/v1.0.0
