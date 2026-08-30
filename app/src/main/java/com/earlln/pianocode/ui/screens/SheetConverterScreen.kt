@@ -197,7 +197,7 @@ fun SheetConverterScreen(
                     Image(
                         bitmap = preview.asImageBitmap(),
                         contentDescription = if (showResult) "변환된 악보" else "원본 악보",
-                        contentScale = ContentScale.FitWidth,
+                        contentScale = ContentScale.FillWidth,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp)),
