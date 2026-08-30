@@ -175,9 +175,10 @@ private fun DrawScope.drawKeyboard(
             cornerRadius = corner,
             style = Stroke(width = 1f * density),
         )
-        if (showLabels && highlight != null && highlight.label != null) {
+        val whiteLabel = highlight?.label
+        if (showLabels && whiteLabel != null) {
             drawKeyLabel(
-                textMeasurer, highlight.label, Color.White,
+                textMeasurer, whiteLabel, Color.White,
                 centerX = left + whiteWidth / 2f,
                 baseline = whiteHeight - whiteHeight * 0.08f,
                 fontSizePx = labelSize,
@@ -217,9 +218,10 @@ private fun DrawScope.drawKeyboard(
                 cornerRadius = corner,
             )
         }
-        if (showLabels && highlight?.label != null) {
+        val blackLabel = highlight?.label
+        if (showLabels && blackLabel != null) {
             drawKeyLabel(
-                textMeasurer, highlight.label, Color.White,
+                textMeasurer, blackLabel, Color.White,
                 centerX = centerX,
                 baseline = blackHeight - blackHeight * 0.1f,
                 fontSizePx = labelSize * 0.92f,

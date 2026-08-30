@@ -193,35 +193,37 @@ fun ChordListScreen(
                 )
             }
 
-            item(key = "family-toggle-${family.id}") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(
-                        onClick = {
-                            val next = if (expanded) {
-                                expandedFamilies - family.id
-                            } else {
-                                expandedFamilies + family.id
-                            }
-                            expandedIds = next.joinToString(",")
-                        },
+            if (variations.isNotEmpty()) {
+                item(key = "family-toggle-${family.id}") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(
-                            if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            contentDescription = null,
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (expanded) {
-                                "변화 코드 접기"
-                            } else {
-                                "변화 코드 ${variations.size}개 모두 보기"
+                        TextButton(
+                            onClick = {
+                                val next = if (expanded) {
+                                    expandedFamilies - family.id
+                                } else {
+                                    expandedFamilies + family.id
+                                }
+                                expandedIds = next.joinToString(",")
                             },
-                        )
+                        ) {
+                            Icon(
+                                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = null,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (expanded) {
+                                    "변화 코드 접기"
+                                } else {
+                                    "변화 코드 ${variations.size}개 모두 보기"
+                                },
+                            )
+                        }
                     }
                 }
             }
