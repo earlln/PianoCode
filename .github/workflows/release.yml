@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.0.0). Must already exist."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build APK and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION_NAME=$(grep '^VERSION_NAME=' version.properties | cut -d= -f2)
+          VERSION_CODE=$(grep '^VERSION_CODE=' version.properties | cut -d= -f2)
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (versionName=$VERSION_NAME, versionCode=$VERSION_CODE)"
+
+      - name: Check the tag matches version.properties
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          EXPECTED="v${{ steps.version.outputs.name }}"
+          if [ "$TAG" != "$EXPECTED" ]; then
+            echo "::error::Tag $TAG does not match version.properties ($EXPECTED). Bump version.properties before tagging."
+            exit 1
+          fi
+
+      - name: Decode signing keystore
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/pianocode.jks"
+          echo "PIANOCODE_KEYSTORE_FILE=$RUNNER_TEMP/pianocode.jks" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        run: ./gradlew :core-music:test --stacktrace
+
+      - name: Build release APK
+        env:
+          PIANOCODE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          PIANOCODE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          PIANOCODE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Collect the APK
+        id: apk
+        run: |
+          mkdir -p dist
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "::error::No APK was produced."
+            exit 1
+          fi
+          TARGET="dist/PianoCode-${{ steps.version.outputs.name }}.apk"
+          cp "$APK" "$TARGET"
+          echo "path=$TARGET" >> "$GITHUB_OUTPUT"
+          ls -l dist
+
+      - name: Extract the release notes for this version
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.name }}"
+          # Pull the section for this version out of CHANGELOG.md; fall back to a stub.
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { capture = 1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "PianoCode $VERSION" > release-notes.md
+          fi
+          cat release-notes.md
+
+      - name: Publish the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: PianoCode ${{ steps.version.outputs.name }}
+          body_path: release-notes.md
+          files: ${{ steps.apk.outputs.path }}
+          fail_on_unmatched_files: true
