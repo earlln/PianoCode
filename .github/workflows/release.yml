@@ -16,6 +16,10 @@ jobs:
   release:
     name: Build APK and publish release
     runs-on: ubuntu-latest
+    # Lifted to the job so the steps below can branch on whether signing is configured;
+    # the secrets context itself is not readable from a step-level `if`.
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,9 +56,7 @@ jobs:
           fi
 
       - name: Decode signing keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        if: env.KEYSTORE_BASE64 != ''
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/pianocode.jks"
           echo "PIANOCODE_KEYSTORE_FILE=$RUNNER_TEMP/pianocode.jks" >> "$GITHUB_ENV"
