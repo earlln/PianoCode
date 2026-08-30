@@ -110,6 +110,24 @@ object SheetTextFilter {
         }
     }
 
+    /**
+     * Words that read as chords but were turned down for standing alone among lyrics.
+     *
+     * A page is read in pieces, and a piece can hold a scrap of the lyric row with the
+     * Korean cropped off, where nothing looks wrong. Naming the reason lets that refusal
+     * travel with the box and outweigh a later, blinder acceptance.
+     */
+    fun lyricRejections(words: List<String>): Set<Int> {
+        if (words.none { word -> word.any { it.isHangul() } }) return emptySet()
+        return words.indices.filter { index ->
+            val text = clean(words[index])
+            text.isNotEmpty() &&
+                text.length <= MAX_SYMBOL_LENGTH &&
+                ChordParser.parse(text, requireUppercaseRoot = true) != null &&
+                !runSupportsShortSymbol(words, index)
+        }.toSet()
+    }
+
     /** Hangul syllables and jamo — the alphabet the lyrics on these sheets are set in. */
     private fun Char.isHangul(): Boolean =
         this in '\uAC00'..'\uD7A3' || this in '\u1100'..'\u11FF' || this in '\u3130'..'\u318F'

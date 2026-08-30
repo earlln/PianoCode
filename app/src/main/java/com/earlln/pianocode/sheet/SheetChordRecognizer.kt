@@ -84,7 +84,7 @@ class SheetChordRecognizer {
             }
         }
 
-        val merged = dropStrayRows(dropOddSizes(merge(found)))
+        val merged = dropOddSizes(merge(found))
         var index = 0
         val detected = merged.filter { it.chord != null }.map { candidate ->
             DetectedChord(
@@ -111,6 +111,8 @@ class SheetChordRecognizer {
         val bounds: Rect,
         val chord: Chord?,
         val confidence: Float,
+        /** This sighting saw the box standing alone among lyrics. */
+        val lyricReject: Boolean = false,
     )
 
     /** Enlarges a tile towards the size the recogniser reads small print most reliably at. */
@@ -163,41 +165,6 @@ class SheetChordRecognizer {
         }.filter { it.width() > 0 && it.height() > 0 }
     }
 
-    /**
-     * Drops readings that sit on their own, away from every row of chords.
-     *
-     * Chords on a lead sheet are printed in rows above each system, five or more to a row.
-     * A reading that shares its line with nothing is a syllable or a slur the recogniser
-     * turned into a letter, and converting it writes a chord into the middle of the lyrics.
-     */
-    private fun dropStrayRows(candidates: List<Candidate>): List<Candidate> {
-        val chords = candidates.filter { it.chord != null }
-        if (chords.size < MIN_FOR_ROW_CHECK) return candidates
-
-        val median = chords.map { it.bounds.height() }.sorted()[chords.size / 2]
-        val tolerance = (median * 1.5f).toInt().coerceAtLeast(8)
-
-        val rows = mutableListOf<MutableList<Candidate>>()
-        for (candidate in chords.sortedBy { it.bounds.centerY() }) {
-            val current = rows.lastOrNull()
-            if (current != null &&
-                candidate.bounds.centerY() - current.last().bounds.centerY() <= tolerance
-            ) {
-                current += candidate
-            } else {
-                rows += mutableListOf(candidate)
-            }
-        }
-
-        // A row of one or two bare letters is not a chord row. A row holding anything
-        // unmistakable — E/G#, C#m7 — is, however short it came out.
-        val strays = rows
-            .filter { row -> row.size <= 2 && row.none { it.text.length >= 3 } }
-            .flatten()
-            .toSet()
-        return candidates.map { if (it in strays) it.copy(chord = null) else it }
-    }
-
     private suspend fun collectInto(
         into: MutableList<Candidate>,
         bitmap: Bitmap,
@@ -217,6 +184,7 @@ class SheetChordRecognizer {
 
                 val words = elements.map { it.text }
                 val taken = SheetTextFilter.chordIndices(words).toSet()
+                val rejectedAsLyric = SheetTextFilter.lyricRejections(words)
                 val lineIsLyric = SheetTextFilter.looksLikeLyrics(words)
 
                 elements.forEachIndexed { position, element ->
@@ -245,6 +213,7 @@ class SheetChordRecognizer {
                             lineIsLyric = lineIsLyric,
                             hasChordNeighbour = SheetTextFilter.runSupportsShortSymbol(words, position),
                         ),
+                        lyricReject = position in rejectedAsLyric,
                     )
                 }
             }
@@ -266,7 +235,15 @@ class SheetChordRecognizer {
                 kept += candidate
                 continue
             }
-            if (isBetter(candidate, kept[clash])) kept[clash] = candidate
+            val winner = if (isBetter(candidate, kept[clash])) candidate else kept[clash]
+            // One pass seeing the box surrounded by lyrics outweighs another accepting it:
+            // the pass that saw the Korean had more of the page to judge by.
+            val rejected = candidate.lyricReject || kept[clash].lyricReject
+            kept[clash] = if (rejected) {
+                winner.copy(chord = null, lyricReject = true)
+            } else {
+                winner
+            }
         }
         return kept
     }
@@ -322,9 +299,6 @@ class SheetChordRecognizer {
         /** Width each tile is enlarged towards before it is read. */
         const val TILE_TARGET_WIDTH = 3000
 
-        /** Below this many readings the rows say too little to filter on. */
-        const val MIN_FOR_ROW_CHECK = 8
-
         /** Drains colour and lifts contrast so thin printed strokes stand off the paper. */
         val OCR_MATRIX = ColorMatrix().apply {
             setSaturation(0f)
@@ -344,8 +318,12 @@ class SheetChordRecognizer {
         /** Below this many readings the median says too little to filter on. */
         const val MIN_FOR_SIZE_CHECK = 5
 
-        /** How far a chord's height may sit from the page's median and still be one. */
-        const val MIN_HEIGHT_RATIO = 0.55f
-        const val MAX_HEIGHT_RATIO = 1.8f
+        /**
+         * How far a chord's height may sit from the page's median and still be one.
+         * Kept wide: a chord wrongly dropped leaves the page in two keys, while a wrong
+         * reading that survives is coloured, listed, and can be switched off.
+         */
+        const val MIN_HEIGHT_RATIO = 0.45f
+        const val MAX_HEIGHT_RATIO = 2.4f
     }
 }

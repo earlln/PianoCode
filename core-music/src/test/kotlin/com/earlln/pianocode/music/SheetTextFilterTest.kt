@@ -102,6 +102,20 @@ class SheetTextFilterTest {
     }
 
     @Test
+    fun `a stray reading among lyrics is named as such, a real chord row is not`() {
+        // The lone letter is refused, and the reason travels with it so a later pass that
+        // sees only a cropped scrap of the same row cannot quietly accept it.
+        val strayInLyrics = listOf("살", "아", "계", "A", "시", "네")
+        assertEquals(setOf(3), SheetTextFilter.lyricRejections(strayInLyrics))
+
+        // A genuine chord row merged with its lyrics refuses nothing.
+        assertEquals(emptySet<Int>(), SheetTextFilter.lyricRejections(mergedRow))
+
+        // A row with no Korean on it is not the lyric case at all.
+        assertEquals(emptySet<Int>(), SheetTextFilter.lyricRejections(chordRow))
+    }
+
+    @Test
     fun `punctuation left by a scan is trimmed off`() {
         assertEquals("Cmaj7", SheetTextFilter.clean("|Cmaj7|"))
         assertEquals("A", SheetTextFilter.clean("(A)"))
