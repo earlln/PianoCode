@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Seven white keys -->
+    <path android:fillColor="#FFFFFF" android:pathData="M28,32h7.4v44h-7.4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M36.4,32h7.4v44h-7.4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M44.8,32h7.4v44h-7.4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M53.2,32h7.4v44h-7.4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M61.6,32h7.4v44h-7.4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M70,32h7.4v44h-7.4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M78.4,32h7.4v44h-7.4z" />
+    <!-- Black keys -->
+    <path android:fillColor="#1B1725" android:pathData="M32.6,32h5.8v27h-5.8z" />
+    <path android:fillColor="#1B1725" android:pathData="M41,32h5.8v27H41z" />
+    <path android:fillColor="#1B1725" android:pathData="M57.8,32h5.8v27h-5.8z" />
+    <path android:fillColor="#1B1725" android:pathData="M66.2,32h5.8v27h-5.8z" />
+    <path android:fillColor="#1B1725" android:pathData="M74.6,32h5.8v27h-5.8z" />
+    <!-- Highlighted C-E-G triad -->
+    <path android:fillColor="#7C5CFF" android:pathData="M28,62h7.4v14h-7.4z" />
+    <path android:fillColor="#7C5CFF" android:pathData="M44.8,62h7.4v14h-7.4z" />
+    <path android:fillColor="#7C5CFF" android:pathData="M61.6,62h7.4v14h-7.4z" />
+</vector>
