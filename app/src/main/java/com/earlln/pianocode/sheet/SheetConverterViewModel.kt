@@ -148,6 +148,9 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
     fun clearMessage() = _state.update { it.copy(message = null) }
 
+    /** Surfaces a problem the UI hit before the view model was involved. */
+    fun showMessage(text: String) = _state.update { it.copy(message = text) }
+
     /** Turns every recognised chord back on, after the user has switched some off. */
     fun enableAll() = _state.update { it.copy(disabledIds = emptySet(), resultBitmap = null) }
 

@@ -1,10 +1,14 @@
 package com.earlln.pianocode.ui.screens
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,6 +27,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -32,8 +40,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -51,6 +62,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -60,6 +72,41 @@ import com.earlln.pianocode.sheet.ConverterStage
 import com.earlln.pianocode.sheet.SheetConverterViewModel
 import com.earlln.pianocode.ui.components.SectionHeader
 import com.earlln.pianocode.util.ImageIo
+
+/**
+ * Where a sheet photo can come from.
+ *
+ * The system photo picker is the quickest route and needs no permission, but it shows one
+ * flat grid. People who keep sheet music filed away reach for their gallery app's own
+ * browser — on a Galaxy that is 사진 / 앨범 / 스토리 — or for a folder in Files, so those are
+ * offered alongside it rather than behind it.
+ */
+private enum class ImageSource(
+    val title: String,
+    val description: String,
+    val icon: ImageVector,
+) {
+    PHOTO_PICKER(
+        "최근 사진",
+        "안드로이드 기본 사진 선택기. 권한 없이 바로 열립니다.",
+        Icons.Filled.PhotoLibrary,
+    ),
+    GALLERY_APP(
+        "갤러리 앱에서 찾기",
+        "삼성 갤러리·구글 포토 등에서 사진, 앨범, 스토리를 탐색합니다.",
+        Icons.Filled.Collections,
+    ),
+    FILES(
+        "파일에서 찾기",
+        "내 파일, 드라이브, 다운로드 폴더의 이미지를 고릅니다.",
+        Icons.Filled.Folder,
+    ),
+    CAMERA(
+        "카메라로 촬영",
+        "지금 악보를 찍어서 바로 변환합니다.",
+        Icons.Filled.PhotoCamera,
+    ),
+}
 
 /**
  * The sheet converter: pick a photo of a lead sheet, let the app read the chord symbols,
@@ -80,9 +127,64 @@ fun SheetConverterScreen(
         state.conversions
     }
 
+    var showSourceSheet by remember { mutableStateOf(false) }
+    // ACTION_IMAGE_CAPTURE writes into a uri we hand it, so the destination is remembered
+    // across the launch and read back once the camera reports success.
+    var captureUri by remember { mutableStateOf<Uri?>(null) }
+
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri -> uri?.let(viewModel::loadImage) }
+
+    // Samsung Gallery, Google Photos and the like answer ACTION_PICK with their own browser,
+    // which is what gets the user into 사진 / 앨범 / 스토리 rather than a flat grid.
+    val pickFromApp = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result -> result.data?.data?.let(viewModel::loadImage) }
+
+    val openDocument = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(viewModel::loadImage) }
+
+    val takePicture = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture(),
+    ) { saved -> if (saved) captureUri?.let(viewModel::loadImage) }
+
+    fun open(source: ImageSource) {
+        showSourceSheet = false
+        try {
+            when (source) {
+                ImageSource.PHOTO_PICKER -> pickImage.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+
+                ImageSource.GALLERY_APP -> {
+                    val intent = Intent(
+                        Intent.ACTION_PICK,
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    ).apply { type = "image/*" }
+                    pickFromApp.launch(Intent.createChooser(intent, "앱에서 악보 찾기"))
+                }
+
+                ImageSource.FILES -> openDocument.launch(arrayOf("image/*"))
+
+                ImageSource.CAMERA -> {
+                    val uri = ImageIo.createCaptureUri(context)
+                    captureUri = uri
+                    takePicture.launch(uri)
+                }
+            }
+        } catch (error: ActivityNotFoundException) {
+            viewModel.showMessage("이 기기에서 ${source.title}을(를) 열 수 있는 앱을 찾지 못했습니다.")
+        }
+    }
+
+    if (showSourceSheet) {
+        ImageSourceSheet(
+            onDismiss = { showSourceSheet = false },
+            onSelect = { open(it) },
+        )
+    }
 
     LaunchedEffect(state.resultBitmap) {
         if (state.resultBitmap != null) showResult = true
@@ -120,13 +222,7 @@ fun SheetConverterScreen(
                     )
                     Spacer(Modifier.height(14.dp))
                     Button(
-                        onClick = {
-                            pickImage.launch(
-                                PickVisualMediaRequest(
-                                    ActivityResultContracts.PickVisualMedia.ImageOnly,
-                                ),
-                            )
-                        },
+                        onClick = { showSourceSheet = true },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
@@ -135,6 +231,12 @@ fun SheetConverterScreen(
                             if (state.sourceBitmap == null) "악보 이미지 선택" else "다른 이미지 선택",
                         )
                     }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "갤러리 앱(사진·앨범·스토리), 파일, 카메라 중에서 고를 수 있습니다.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -444,6 +546,61 @@ private fun KeyPicker(
                 onClick = { onSelect(key) },
                 label = { Text(key.shortName) },
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ImageSourceSheet(
+    onDismiss: () -> Unit,
+    onSelect: (ImageSource) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(Modifier.padding(bottom = 28.dp)) {
+            Text(
+                "악보 이미지 가져오기",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 4.dp),
+            )
+            Text(
+                "어디에서 찾을지 골라 주세요.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider()
+
+            ImageSource.entries.forEach { source ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(source) }
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        source.icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp),
+                    )
+                    Spacer(Modifier.width(18.dp))
+                    Column {
+                        Text(source.title, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            source.description,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }

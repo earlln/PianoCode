@@ -108,6 +108,19 @@ object ImageIo {
         return uri
     }
 
+    /**
+     * A writable uri the camera app can save a captured page into.
+     *
+     * ACTION_IMAGE_CAPTURE hands the photo back through a uri we supply rather than in the
+     * result, so the file has to exist — under FileProvider — before the camera is launched.
+     */
+    fun createCaptureUri(context: Context): Uri {
+        val directory = File(context.cacheDir, "captures").apply { mkdirs() }
+        val file = File(directory, "sheet_${System.currentTimeMillis()}.jpg")
+        file.createNewFile()
+        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    }
+
     /** Builds a share intent for [bitmap] through the app's FileProvider. */
     fun shareIntent(context: Context, bitmap: Bitmap, fileName: String): Intent {
         val directory = File(context.cacheDir, "shared").apply { mkdirs() }
