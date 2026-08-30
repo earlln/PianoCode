@@ -47,8 +47,16 @@ data class SheetConverterState(
             detected.id !in disabledIds && conversion.changed
         }
 
-    /** Semitones the transpose mode will move everything by. */
-    val semitoneShift: Int get() = sourceKey.semitonesTo(targetKey)
+    /** Semitones the transpose mode will move everything by, written the short way round. */
+    val semitoneShift: Int get() = sourceKey.signedSemitonesTo(targetKey)
+
+    /** `+3반음`, `-2반음`, `같은 높이` — how the move reads to a player. */
+    val shiftText: String
+        get() = when {
+            semitoneShift > 0 -> "+${semitoneShift}반음"
+            semitoneShift < 0 -> "${semitoneShift}반음"
+            else -> "같은 높이"
+        }
 
     /**
      * How many symbols will stay in the original key: ones the recogniser could not read,
@@ -59,8 +67,7 @@ data class SheetConverterState(
 
     /** The line stamped across the top of the converted page. */
     val banner: String
-        get() = "PianoCode · ${sourceKey.shortName} → ${targetKey.shortName}" +
-            (if (semitoneShift == 0) "" else " (+${semitoneShift}반음)") +
+        get() = "PianoCode · ${sourceKey.shortName} → ${targetKey.shortName} ($shiftText)" +
             " · 코드 심볼만 변경 (오선보 조표·음표는 원본 그대로)"
 }
 

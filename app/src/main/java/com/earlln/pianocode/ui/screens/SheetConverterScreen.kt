@@ -363,8 +363,7 @@ fun SheetConverterScreen(
                     )
                     Text(
                         "${state.sourceKey.name} → ${state.targetKey.name} " +
-                            "(${if (state.semitoneShift == 0) "같은 높이" else "+${state.semitoneShift}반음"}) · " +
-                            "${state.targetKey.keySignatureText}",
+                            "(${state.shiftText}) · ${state.targetKey.keySignatureText}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),

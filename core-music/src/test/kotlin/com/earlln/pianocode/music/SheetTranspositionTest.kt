@@ -80,6 +80,37 @@ class SheetTranspositionTest {
     @Test
     fun `the shift from A to C is a minor third`() {
         assertEquals(3, aMajor.semitonesTo(cMajor))
+        assertEquals(3, aMajor.signedSemitonesTo(cMajor))
+    }
+
+    @Test
+    fun `moving down is written as a step down, not eleven steps up`() {
+        val gMajor = Key(Note(4, 0), ScaleType.MAJOR)
+        // A to G is ten semitones up the octave, but players read it as a whole step down.
+        assertEquals(10, aMajor.semitonesTo(gMajor))
+        assertEquals(-2, aMajor.signedSemitonesTo(gMajor))
+        assertEquals(-1, cMajor.signedSemitonesTo(Key(Note(6, 0), ScaleType.MAJOR)))
+        assertEquals(6, cMajor.signedSemitonesTo(Key(Note(3, 1), ScaleType.MAJOR)))
+    }
+
+    @Test
+    fun `the whole sheet moves from A major down to G major`() {
+        val gMajor = Key(Note(4, 0), ScaleType.MAJOR)
+        val parsed = originalChords.map { ChordParser.parse(it)!! }
+        val converted = Transposer
+            .convertAll(parsed, aMajor, gMajor, ConversionMode.TRANSPOSE)
+            .map { it.converted.symbol }
+
+        val expectedInG = listOf(
+            "G", "D/F#", "Em7", "Bm7", "C", "G/B", "Am7", "D7",
+            "G", "D/F#", "Em7", "Bm7", "C", "G/B",
+            "Am7", "D7", "G", "D/F#", "Em7", "B7",
+            "C", "G/B", "Am7", "D7", "G", "C", "D7",
+            "G", "D/F#", "Em7", "Bm7", "C", "G/B",
+            "Am7", "D7", "G", "D/F#", "Em7", "Bm7",
+            "C", "G/B", "Am7", "D7", "G",
+        )
+        assertEquals(expectedInG, converted)
     }
 
     @Test

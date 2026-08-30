@@ -76,8 +76,10 @@ object SheetTextFilter {
         var end = index
         while (end < words.lastIndex && parses(words[end + 1])) end++
 
+        // A run of one has no company at all: on a line carrying lyrics that is the scanner
+        // misreading a syllable, however chord-like the reading looks on its own.
         val run = (start..end).map { clean(words[it]) }
-        return run.size >= 3 || run.any { it.length >= 3 }
+        return run.size >= 3 || (run.size >= 2 && run.any { it.length >= 3 })
     }
 
     /**
@@ -88,11 +90,16 @@ object SheetTextFilter {
      */
     fun chordIndices(words: List<String>): List<Int> {
         val lineIsLyric = looksLikeLyrics(words)
+        // Hangul on the line proves lyrics are mixed into it. A chord there has to be part
+        // of a run of chords; a lone symbol among the words is the scanner misreading a
+        // syllable, and converting it stamps a chord into the middle of the lyrics.
+        val hasLyricText = words.any { word -> word.any { it.isHangul() } }
         return words.indices.filter { index ->
             val text = clean(words[index])
             when {
                 text.isEmpty() || text.length > MAX_SYMBOL_LENGTH -> false
                 ChordParser.parse(text, requireUppercaseRoot = true) == null -> false
+                hasLyricText -> runSupportsShortSymbol(words, index)
                 // Anything long enough to be unmistakable is taken as read.
                 text.length >= 3 -> true
                 // Short symbols on a plain chord row are fine; on a row the scanner mixed
@@ -102,6 +109,10 @@ object SheetTextFilter {
             }
         }
     }
+
+    /** Hangul syllables and jamo — the alphabet the lyrics on these sheets are set in. */
+    private fun Char.isHangul(): Boolean =
+        this in '\uAC00'..'\uD7A3' || this in '\u1100'..'\u11FF' || this in '\u3130'..'\u318F'
 
     /** How much to trust a symbol, shown next to the low-confidence ones for review. */
     fun confidenceOf(text: String, lineIsLyric: Boolean, hasChordNeighbour: Boolean): Float {

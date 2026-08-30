@@ -86,6 +86,22 @@ class SheetTextFilterTest {
     }
 
     @Test
+    fun `a lone symbol among Korean lyrics is not stamped into the words`() {
+        // A syllable misread as a chord would otherwise be overwritten mid-lyric.
+        val lyricsWithNoise = listOf("살", "아", "계", "A", "시", "네")
+        assertEquals(emptyList<String>(), taken(lyricsWithNoise))
+
+        // Even a longer misreading needs chords around it once Hangul is on the line.
+        assertEquals(emptyList<String>(), taken(listOf("원", "한왕", "Cmaj7", "내", "안에")))
+    }
+
+    @Test
+    fun `chords still survive on a line that also carries Korean lyrics`() {
+        // The merged chord+lyric row must keep working; only lone strays are dropped.
+        assertEquals(chordRow, taken(mergedRow))
+    }
+
+    @Test
     fun `punctuation left by a scan is trimmed off`() {
         assertEquals("Cmaj7", SheetTextFilter.clean("|Cmaj7|"))
         assertEquals("A", SheetTextFilter.clean("(A)"))

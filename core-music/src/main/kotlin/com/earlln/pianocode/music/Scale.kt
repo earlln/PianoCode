@@ -107,6 +107,17 @@ data class Key(val tonic: Note, val type: ScaleType = ScaleType.MAJOR) {
     /** Semitones from this key's tonic up to [other]'s tonic, 0..11. */
     fun semitonesTo(other: Key): Int = Math.floorMod(other.tonic.pitchClass - tonic.pitchClass, 12)
 
+    /**
+     * The same move written the short way round, -6..+6.
+     *
+     * A to G is ten semitones up or two down, and the two land on identical chords. Players
+     * read it as a whole step down, so that is the number worth showing them.
+     */
+    fun signedSemitonesTo(other: Key): Int {
+        val up = semitonesTo(other)
+        return if (up > 6) up - 12 else up
+    }
+
     /** The seven chords built on this scale, as triads or sevenths. */
     fun diatonicChords(seventh: Boolean = false): List<DiatonicChord> {
         if (!type.isHeptatonic) return emptyList()
