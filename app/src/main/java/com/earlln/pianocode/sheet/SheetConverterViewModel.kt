@@ -34,6 +34,7 @@ data class SheetConverterState(
     val targetKey: Key = Key(Note(4, 0), ScaleType.MAJOR),
     val mode: ConversionMode = ConversionMode.TRANSPOSE,
     val keyWasDetected: Boolean = false,
+    val markConverted: Boolean = true,
     val message: String? = null,
 ) {
     val enabled: List<DetectedChord> get() = detected.filterNot { it.id in disabledIds }
@@ -68,6 +69,7 @@ data class SheetConverterState(
     /** The line stamped across the top of the converted page. */
     val banner: String
         get() = "PianoCode · ${sourceKey.shortName} → ${targetKey.shortName} ($shiftText)" +
+            (if (markConverted) " · 보라색이 바뀐 코드" else "") +
             " · 코드 심볼만 변경 (오선보 조표·음표는 원본 그대로)"
 }
 
@@ -153,6 +155,10 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
     fun setMode(mode: ConversionMode) = _state.update { it.copy(mode = mode, resultBitmap = null) }
 
+    /** Whether converted symbols are written in the highlight colour or the page's own ink. */
+    fun setMarkConverted(mark: Boolean) =
+        _state.update { it.copy(markConverted = mark, resultBitmap = null) }
+
     fun clearMessage() = _state.update { it.copy(message = null) }
 
     /** Surfaces a problem the UI hit before the view model was involved. */
@@ -178,7 +184,12 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     ChordReplacement(detected.bounds, conversion.converted.symbol)
                 }
             val rendered = withContext(Dispatchers.Default) {
-                SheetRenderer.render(source, replacements, banner = current.banner)
+                SheetRenderer.render(
+                    source = source,
+                    replacements = replacements,
+                    banner = current.banner,
+                    highlightInk = if (current.markConverted) SheetRenderer.CONVERTED_INK else null,
+                )
             }
             _state.update {
                 it.copy(stage = ConverterStage.READY, resultBitmap = rendered)

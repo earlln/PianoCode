@@ -8,8 +8,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -58,6 +60,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +73,7 @@ import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.sheet.ConverterStage
 import com.earlln.pianocode.sheet.SheetConverterViewModel
+import com.earlln.pianocode.sheet.SheetRenderer
 import com.earlln.pianocode.ui.components.SectionHeader
 import com.earlln.pianocode.util.ImageIo
 
@@ -316,6 +320,48 @@ fun SheetConverterScreen(
                         title = "변환 설정",
                         subtitle = "${state.detected.size}개의 코드를 찾았습니다",
                     )
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Row(
+                        Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(18.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(SheetRenderer.CONVERTED_INK)),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("바뀐 코드를 색으로 구분", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                if (state.markConverted) {
+                                    "새로 쓴 코드는 보라색, 원래 조성으로 남은 코드는 검정입니다."
+                                } else {
+                                    "악보 원래 잉크색으로 씁니다. 인쇄용으로 깔끔하지만 " +
+                                        "무엇이 바뀌었는지 구분되지 않습니다."
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = state.markConverted,
+                            onCheckedChange = viewModel::setMarkConverted,
+                        )
+                    }
                 }
             }
 

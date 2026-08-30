@@ -28,10 +28,28 @@ object SheetRenderer {
     /** How far past its original box a longer symbol may extend before it is shrunk. */
     private const val MAX_WIDTH_GROWTH = 2.4f
 
+    /**
+     * The colour a converted symbol is written in.
+     *
+     * Drawing the new chord in the page's own ink makes it indistinguishable from a symbol
+     * that was never touched, so a page the recogniser only half converted looks finished.
+     * A deep violet reads clearly on white or cream paper and photocopies dark enough to
+     * stay legible.
+     */
+    const val CONVERTED_INK = 0xFF5B3FD6.toInt()
+
+    /**
+     * Paints [replacements] onto a copy of [source].
+     *
+     * [highlightInk] writes every converted symbol in one colour so it stands out from the
+     * symbols still in the original key; passing null matches the page's own ink instead,
+     * for a clean print.
+     */
     fun render(
         source: Bitmap,
         replacements: List<ChordReplacement>,
         banner: String? = null,
+        highlightInk: Int? = CONVERTED_INK,
     ): Bitmap {
         val bannerHeight = if (banner == null) 0 else bannerHeightFor(source)
         val output = Bitmap.createBitmap(
@@ -66,7 +84,7 @@ object SheetRenderer {
             RenderPlan(
                 replacement = replacement,
                 paper = paper,
-                ink = sampleInkColor(source, bounds, paper),
+                ink = highlightInk ?: sampleInkColor(source, bounds, paper),
             )
         }
 
