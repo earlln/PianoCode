@@ -2,10 +2,13 @@ package com.earlln.pianocode.sheet
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.earlln.pianocode.music.Chord
 import com.earlln.pianocode.music.ChordConversion
+import com.earlln.pianocode.music.ChordParser
 import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.music.Note
@@ -19,6 +22,31 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/**
+ * A chord the reader missed or misread, written in by hand.
+ *
+ * Recognition will never catch every symbol on every page, and a page converted all but
+ * three ways is still a page in two keys. Rather than chase the last few by tightening
+ * filters — which costs correct readings elsewhere — the remaining ones are placed by hand,
+ * and they are painted exactly like the automatic ones.
+ */
+data class ManualChord(
+    val id: String,
+    val bounds: Rect,
+    val chord: Chord,
+)
+
+/** A region the user has marked out, waiting for them to say what belongs there. */
+data class PendingEdit(
+    val bounds: Rect,
+    /** What the page appears to say there, when the reader saw something it could not use. */
+    val originalText: String? = null,
+    /** Where that reading would land in the target key, offered as a one-tap answer. */
+    val suggestion: Chord? = null,
+    /** Set when the user is correcting an entry they already placed. */
+    val replacingId: String? = null,
+)
 
 /** Where the converter is in its pick → read → convert → save flow. */
 enum class ConverterStage { EMPTY, ANALYZING, READY, RENDERING }
@@ -36,6 +64,9 @@ data class SheetConverterState(
     val keyWasDetected: Boolean = false,
     val markConverted: Boolean = true,
     val markingColor: MarkingColor = MarkingColor.VIOLET,
+    val manualEdits: List<ManualChord> = emptyList(),
+    val pendingEdit: PendingEdit? = null,
+    val editMode: Boolean = false,
     val message: String? = null,
 ) {
     val enabled: List<DetectedChord> get() = detected.filterNot { it.id in disabledIds }
@@ -48,6 +79,10 @@ data class SheetConverterState(
         get() = conversions.count { (detected, conversion) ->
             detected.id !in disabledIds && conversion.changed
         }
+
+    /** True when two boxes cover mostly the same spot on the page. */
+    private fun overlaps(a: Rect, b: Rect): Boolean =
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
 
     /** Semitones the transpose mode will move everything by, written the short way round. */
     val semitoneShift: Int get() = sourceKey.signedSemitonesTo(targetKey)
@@ -65,7 +100,29 @@ data class SheetConverterState(
      * plus ones the user switched off. Any of these leaves the page in two keys at once,
      * so the screen shows this count rather than letting it pass unnoticed.
      */
-    val leftBehindCount: Int get() = missed.size + disabledIds.size
+    val leftBehindCount: Int
+        get() = (missed.count { candidate -> manualEdits.none { overlaps(it.bounds, candidate.bounds) } } +
+            disabledIds.size).coerceAtLeast(0)
+
+    /** Everything that will be painted: the automatic conversions plus the hand-placed ones. */
+    val replacements: List<Pair<Rect, String>>
+        get() {
+            val manual = manualEdits.map { it.bounds to it.chord.symbol }
+            val automatic = conversions
+                .filter { (detected, _) -> detected.id !in disabledIds }
+                // A hand-placed chord wins over whatever the reader put in the same spot.
+                .filter { (detected, _) -> manualEdits.none { overlaps(it.bounds, detected.bounds) } }
+                .map { (detected, conversion) -> detected.bounds to conversion.converted.symbol }
+            return automatic + manual
+        }
+
+    /** The typical size of a chord on this page, used to size a tap into a box. */
+    val typicalChordBounds: Rect?
+        get() = detected.map { it.bounds }.takeIf { it.isNotEmpty() }?.let { boxes ->
+            val heights = boxes.map { it.height() }.sorted()
+            val widths = boxes.map { it.width() }.sorted()
+            Rect(0, 0, widths[widths.size / 2], heights[heights.size / 2])
+        }
 
     /** The line stamped across the top of the converted page. */
     val banner: String
@@ -93,6 +150,8 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     detected = emptyList(),
                     missed = emptyList(),
                     disabledIds = emptySet(),
+                    manualEdits = emptyList(),
+                    pendingEdit = null,
                     message = null,
                 )
             }
@@ -166,6 +225,71 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
     fun setMarkConverted(mark: Boolean) =
         _state.update { it.copy(markConverted = mark, resultBitmap = null) }
 
+    /** Turns hand-editing on or off. */
+    fun setEditMode(on: Boolean) =
+        _state.update { it.copy(editMode = on, pendingEdit = null) }
+
+    /**
+     * Opens the picker for a region the user marked on the page.
+     *
+     * When the reader saw text there but could not use it, that text is offered already
+     * transposed, so the common case — a symbol it simply missed — is one more tap.
+     */
+    fun beginEdit(bounds: Rect) {
+        val current = _state.value
+        val nearby = current.missed.firstOrNull { overlapsRect(it.bounds, bounds) }
+        val parsed = nearby?.let { ChordParser.parse(it.text, requireUppercaseRoot = true) }
+        val suggestion = parsed?.let {
+            Transposer.convert(it, current.sourceKey, current.targetKey, current.mode).converted
+        }
+        _state.update {
+            it.copy(
+                pendingEdit = PendingEdit(
+                    bounds = nearby?.bounds ?: bounds,
+                    originalText = nearby?.text,
+                    suggestion = suggestion,
+                ),
+            )
+        }
+    }
+
+    /** Reopens the picker for a chord already placed by hand. */
+    fun editExisting(id: String) {
+        val existing = _state.value.manualEdits.firstOrNull { it.id == id } ?: return
+        _state.update {
+            it.copy(
+                pendingEdit = PendingEdit(
+                    bounds = existing.bounds,
+                    suggestion = existing.chord,
+                    replacingId = id,
+                ),
+            )
+        }
+    }
+
+    fun cancelEdit() = _state.update { it.copy(pendingEdit = null) }
+
+    /** Places [chord] in the marked region. */
+    fun applyEdit(chord: Chord) {
+        val pending = _state.value.pendingEdit ?: return
+        _state.update { current ->
+            val id = pending.replacingId ?: "manual-${System.currentTimeMillis()}"
+            val kept = current.manualEdits.filterNot { it.id == id }
+            current.copy(
+                manualEdits = kept + ManualChord(id, pending.bounds, chord),
+                pendingEdit = null,
+                resultBitmap = null,
+            )
+        }
+    }
+
+    fun removeEdit(id: String) = _state.update {
+        it.copy(manualEdits = it.manualEdits.filterNot { edit -> edit.id == id }, resultBitmap = null)
+    }
+
+    private fun overlapsRect(a: Rect, b: Rect): Boolean =
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+
     /** Overrides the colour chosen for this page. */
     fun setMarkingColor(color: MarkingColor) =
         _state.update { it.copy(markingColor = color, resultBitmap = null) }
@@ -189,11 +313,9 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
         viewModelScope.launch {
             _state.update { it.copy(stage = ConverterStage.RENDERING) }
-            val replacements = current.conversions
-                .filter { (detected, _) -> detected.id !in current.disabledIds }
-                .map { (detected, conversion) ->
-                    ChordReplacement(detected.bounds, conversion.converted.symbol)
-                }
+            val replacements = current.replacements.map { (bounds, symbol) ->
+                ChordReplacement(bounds, symbol)
+            }
             val rendered = withContext(Dispatchers.Default) {
                 SheetRenderer.render(
                     source = source,

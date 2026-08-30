@@ -8,6 +8,27 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-30
+
+### 추가됨 (Added)
+
+- **직접 고치기.** 자동으로 못 바꾼 코드를 손으로 채울 수 있습니다.
+  변환 설정의 `직접 고치기`를 켜고, 결과 그림에서 고칠 코드 위를 손가락으로 감싸듯
+  그으면 넣을 코드를 고르는 창이 열립니다.
+  - 그 자리에서 글자는 읽었지만 코드로 쓰지 못한 경우, **변환된 코드가 바로 제시**되어
+    한 번 더 누르면 끝납니다. (`C♯m7`을 읽었지만 못 썼다면 `Bm7 넣기` 버튼이 뜹니다)
+  - 그 외에는 근음 17개 × 55종류의 전체 목록에서 고르면 됩니다.
+    구성음이 함께 보여 확인하며 고를 수 있습니다.
+  - 손으로 넣은 코드는 자동 변환과 똑같이 표시 색으로 그려지고, 목록에서
+    `바꾸기`·`지우기`로 다시 손볼 수 있습니다.
+  - 같은 자리에 자동 변환이 있으면 손으로 넣은 쪽이 우선합니다.
+
+### 방향 (Note)
+
+인식률을 100%로 끌어올리려 필터를 조이면 멀쩡한 코드가 함께 사라지고,
+풀면 엉뚱한 글자가 들어옵니다. 이 줄다리기를 반복하는 대신,
+**자동으로 대부분을 처리하고 남은 몇 개는 손으로 확실하게** 끝내는 쪽으로 갑니다.
+
 ## [1.4.1] - 2026-08-30
 
 1.4.0에서 인식이 43개 → 39개로 더 줄었습니다. 가사 오염(`,G`)은 사라졌지만,
@@ -214,7 +235,8 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 - 글자 인식은 ML Kit의 기기 내 처리 모델을 사용합니다. 사진은 서버로 전송되지 않습니다.
 - 최소 지원 버전은 Android 7.0(API 24), 타깃은 Android 15(API 35)입니다.
 
-[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/earlln/PianoCode/releases/tag/v1.5.0
 [1.4.1]: https://github.com/earlln/PianoCode/releases/tag/v1.4.1
 [1.4.0]: https://github.com/earlln/PianoCode/releases/tag/v1.4.0
 [1.3.1]: https://github.com/earlln/PianoCode/releases/tag/v1.3.1
