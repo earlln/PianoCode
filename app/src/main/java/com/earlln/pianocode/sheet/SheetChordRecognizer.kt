@@ -1,6 +1,10 @@
 package com.earlln.pianocode.sheet
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.Rect
 import com.earlln.pianocode.music.Chord
 import com.earlln.pianocode.music.ChordParser
@@ -71,23 +75,16 @@ class SheetChordRecognizer {
         collectInto(found, bitmap, offset = Rect(0, 0, bitmap.width, bitmap.height), scale = 1f)
 
         for (tile in tilesOf(bitmap)) {
-            val slice = Bitmap.createBitmap(bitmap, tile.left, tile.top, tile.width(), tile.height())
             val scale = scaleFor(tile)
-            val enlarged = if (scale == 1f) slice else Bitmap.createScaledBitmap(
-                slice,
-                (slice.width * scale).toInt(),
-                (slice.height * scale).toInt(),
-                true,
-            )
+            val prepared = prepareTile(bitmap, tile, scale)
             try {
-                collectInto(found, enlarged, offset = tile, scale = scale)
+                collectInto(found, prepared, offset = tile, scale = scale)
             } finally {
-                if (enlarged != slice) enlarged.recycle()
-                slice.recycle()
+                prepared.recycle()
             }
         }
 
-        val merged = dropOddSizes(merge(found))
+        val merged = dropStrayRows(dropOddSizes(merge(found)))
         var index = 0
         val detected = merged.filter { it.chord != null }.map { candidate ->
             DetectedChord(
@@ -118,7 +115,25 @@ class SheetChordRecognizer {
 
     /** Enlarges a tile towards the size the recogniser reads small print most reliably at. */
     private fun scaleFor(tile: Rect): Float =
-        (TILE_TARGET_WIDTH.toFloat() / tile.width()).coerceIn(1f, 3f)
+        (TILE_TARGET_WIDTH.toFloat() / tile.width()).coerceIn(1f, 3.5f)
+
+    /**
+     * Crops, enlarges and cleans one tile in a single draw.
+     *
+     * Printed chord symbols are thin black strokes on paper. Draining the colour and
+     * pushing the contrast separates those strokes from the grey the camera puts around
+     * them, which is most of what stands between a faint symbol and a legible one.
+     */
+    private fun prepareTile(source: Bitmap, tile: Rect, scale: Float): Bitmap {
+        val width = (tile.width() * scale).toInt().coerceAtLeast(1)
+        val height = (tile.height() * scale).toInt().coerceAtLeast(1)
+        val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(OCR_MATRIX)
+        }
+        Canvas(output).drawBitmap(source, tile, Rect(0, 0, width, height), paint)
+        return output
+    }
 
     /**
      * The page cut into overlapping tiles: a band per system, each split left and right.
@@ -128,20 +143,59 @@ class SheetChordRecognizer {
      * overlap on both axes so a symbol sitting on a seam is whole in the neighbouring tile.
      */
     private fun tilesOf(bitmap: Bitmap): List<Rect> {
-        val bandCount = (bitmap.height / 420).coerceIn(3, 12)
+        val bandCount = (bitmap.height / 520).coerceIn(3, 9)
         val step = bitmap.height / bandCount
         val overlapY = (step * 0.2f).toInt()
-        val halfWidth = bitmap.width / 2
-        val overlapX = (halfWidth * 0.12f).toInt()
+        val columnWidth = bitmap.width / COLUMNS
+        val overlapX = (columnWidth * 0.15f).toInt()
 
-        return (0 until bandCount).flatMap { index ->
-            val top = (index * step - overlapY).coerceAtLeast(0)
-            val bottom = ((index + 1) * step + overlapY).coerceAtMost(bitmap.height)
-            listOf(
-                Rect(0, top, (halfWidth + overlapX).coerceAtMost(bitmap.width), bottom),
-                Rect((halfWidth - overlapX).coerceAtLeast(0), top, bitmap.width, bottom),
-            )
+        return (0 until bandCount).flatMap { band ->
+            val top = (band * step - overlapY).coerceAtLeast(0)
+            val bottom = ((band + 1) * step + overlapY).coerceAtMost(bitmap.height)
+            (0 until COLUMNS).map { column ->
+                Rect(
+                    (column * columnWidth - overlapX).coerceAtLeast(0),
+                    top,
+                    ((column + 1) * columnWidth + overlapX).coerceAtMost(bitmap.width),
+                    bottom,
+                )
+            }
         }.filter { it.width() > 0 && it.height() > 0 }
+    }
+
+    /**
+     * Drops readings that sit on their own, away from every row of chords.
+     *
+     * Chords on a lead sheet are printed in rows above each system, five or more to a row.
+     * A reading that shares its line with nothing is a syllable or a slur the recogniser
+     * turned into a letter, and converting it writes a chord into the middle of the lyrics.
+     */
+    private fun dropStrayRows(candidates: List<Candidate>): List<Candidate> {
+        val chords = candidates.filter { it.chord != null }
+        if (chords.size < MIN_FOR_ROW_CHECK) return candidates
+
+        val median = chords.map { it.bounds.height() }.sorted()[chords.size / 2]
+        val tolerance = (median * 1.5f).toInt().coerceAtLeast(8)
+
+        val rows = mutableListOf<MutableList<Candidate>>()
+        for (candidate in chords.sortedBy { it.bounds.centerY() }) {
+            val current = rows.lastOrNull()
+            if (current != null &&
+                candidate.bounds.centerY() - current.last().bounds.centerY() <= tolerance
+            ) {
+                current += candidate
+            } else {
+                rows += mutableListOf(candidate)
+            }
+        }
+
+        // A row of one or two bare letters is not a chord row. A row holding anything
+        // unmistakable — E/G#, C#m7 — is, however short it came out.
+        val strays = rows
+            .filter { row -> row.size <= 2 && row.none { it.text.length >= 3 } }
+            .flatten()
+            .toSet()
+        return candidates.map { if (it in strays) it.copy(chord = null) else it }
     }
 
     private suspend fun collectInto(
@@ -262,8 +316,30 @@ class SheetChordRecognizer {
     fun close() = recognizer.close()
 
     private companion object {
+        /** Vertical slices the page is cut into, so each symbol keeps more of the frame. */
+        const val COLUMNS = 3
+
         /** Width each tile is enlarged towards before it is read. */
-        const val TILE_TARGET_WIDTH = 2200
+        const val TILE_TARGET_WIDTH = 3000
+
+        /** Below this many readings the rows say too little to filter on. */
+        const val MIN_FOR_ROW_CHECK = 8
+
+        /** Drains colour and lifts contrast so thin printed strokes stand off the paper. */
+        val OCR_MATRIX = ColorMatrix().apply {
+            setSaturation(0f)
+            postConcat(ColorMatrix(contrastMatrix(1.7f)))
+        }
+
+        private fun contrastMatrix(scale: Float): FloatArray {
+            val shift = (-0.5f * scale + 0.5f) * 255f
+            return floatArrayOf(
+                scale, 0f, 0f, 0f, shift,
+                0f, scale, 0f, 0f, shift,
+                0f, 0f, scale, 0f, shift,
+                0f, 0f, 0f, 1f, 0f,
+            )
+        }
 
         /** Below this many readings the median says too little to filter on. */
         const val MIN_FOR_SIZE_CHECK = 5
