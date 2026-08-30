@@ -8,6 +8,28 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-30
+
+1.5.0의 직접 고치기가 실제로는 잘 눌리지 않았습니다. 두 가지가 문제였습니다.
+
+### 고쳐짐 (Fixed)
+
+- **손가락 제스처가 목록 스크롤에 먹히던 문제.** 미리보기가 설정 목록 안에 있어서
+  그림 위를 긋는 동작을 목록이 스크롤로 가져갔습니다.
+  이제 **전체 화면 편집기**로 분리했습니다.
+- **너무 작아서 못 누르던 문제.** 폰 너비에 맞춘 악보에서 코드 심볼은 몇 밀리미터입니다.
+  편집기에서 **두 손가락으로 확대·이동**할 수 있고, 확대/축소 버튼도 있습니다.
+  누르는 동작도 감싸 긋기에서 **한 번 누르기**로 바꿔 훨씬 정확합니다.
+
+### 바뀜 (Changed)
+
+- **이제 '변경 전' 코드를 고릅니다.** 악보는 눈앞에 옛 조성으로 펼쳐져 있으니
+  거기 적힌 `C♯m7`을 고르면 되고, 그게 `Bm7`이 된다는 계산은 앱이 합니다.
+  목록의 모든 항목이 `C♯m7 → Bm7`처럼 변환 결과를 함께 보여 줍니다.
+- 편집기에서 **읽었지만 바꾸지 못한 자리를 분홍 테두리로 표시**합니다.
+  찾아다닐 필요 없이 표시된 곳을 누르면 됩니다.
+  이미 손으로 넣은 코드는 표시 색 테두리로 보입니다.
+
 ## [1.5.0] - 2026-08-30
 
 ### 추가됨 (Added)
@@ -235,7 +257,8 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 - 글자 인식은 ML Kit의 기기 내 처리 모델을 사용합니다. 사진은 서버로 전송되지 않습니다.
 - 최소 지원 버전은 Android 7.0(API 24), 타깃은 Android 15(API 35)입니다.
 
-[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/earlln/PianoCode/releases/tag/v1.6.0
 [1.5.0]: https://github.com/earlln/PianoCode/releases/tag/v1.5.0
 [1.4.1]: https://github.com/earlln/PianoCode/releases/tag/v1.4.1
 [1.4.0]: https://github.com/earlln/PianoCode/releases/tag/v1.4.0

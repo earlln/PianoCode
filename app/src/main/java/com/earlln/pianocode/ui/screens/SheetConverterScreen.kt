@@ -7,10 +7,8 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,14 +60,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -144,9 +136,6 @@ fun SheetConverterScreen(
     // ACTION_IMAGE_CAPTURE writes into a uri we hand it, so the destination is remembered
     // across the launch and read back once the camera reports success.
     var captureUri by remember { mutableStateOf<Uri?>(null) }
-    var previewSize by remember { mutableStateOf(IntSize.Zero) }
-    var dragStart by remember { mutableStateOf<Offset?>(null) }
-    var dragEnd by remember { mutableStateOf<Offset?>(null) }
 
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
@@ -206,18 +195,28 @@ fun SheetConverterScreen(
         if (state.resultBitmap != null) showResult = true
     }
 
-    // The result carries a banner above the page, so a tap on it sits that much lower than
-    // the same spot on the source the boxes were measured against.
-    val bannerOffset = if (showResult && state.resultBitmap != null) {
-        state.sourceBitmap?.let { SheetRenderer.bannerHeightFor(it) } ?: 0
-    } else {
-        0
+    val editorPage = state.resultBitmap ?: state.sourceBitmap
+    if (state.editMode && editorPage != null) {
+        SheetEditorDialog(
+            bitmap = editorPage,
+            bannerHeight = if (state.resultBitmap != null) {
+                state.sourceBitmap?.let { SheetRenderer.bannerHeightFor(it) } ?: 0
+            } else {
+                0
+            },
+            markingColor = state.markingColor.argb,
+            missed = state.missed,
+            manualEdits = state.manualEdits,
+            onPickSpot = viewModel::beginEdit,
+            onClose = { viewModel.setEditMode(false) },
+        )
     }
 
     state.pendingEdit?.let { pending ->
         ChordPickerSheet(
             originalText = pending.originalText,
             suggestion = pending.suggestion,
+            transpose = viewModel::transposeForPage,
             onDismiss = viewModel::cancelEdit,
             onPick = viewModel::applyEdit,
         )
@@ -330,75 +329,14 @@ fun SheetConverterScreen(
                         }
                         Spacer(Modifier.height(8.dp))
                     }
-                    Box {
-                        Image(
-                            bitmap = preview.asImageBitmap(),
-                            contentDescription = if (showResult) "변환된 악보" else "원본 악보",
-                            contentScale = ContentScale.FillWidth,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .onSizeChanged { previewSize = it }
-                                .pointerInput(state.editMode, preview) {
-                                    if (!state.editMode) return@pointerInput
-                                    detectDragGestures(
-                                        onDragStart = {
-                                            dragStart = it
-                                            dragEnd = it
-                                        },
-                                        onDrag = { change, _ ->
-                                            change.consume()
-                                            dragEnd = change.position
-                                        },
-                                        onDragEnd = {
-                                            val from = dragStart
-                                            val to = dragEnd
-                                            if (from != null && to != null && previewSize.width > 0) {
-                                                sourceRectOf(
-                                                    from = from,
-                                                    to = to,
-                                                    viewSize = previewSize,
-                                                    bitmapWidth = preview.width,
-                                                    bannerHeight = bannerOffset,
-                                                    fallback = state.typicalChordBounds,
-                                                )?.let(viewModel::beginEdit)
-                                            }
-                                            dragStart = null
-                                            dragEnd = null
-                                        },
-                                        onDragCancel = {
-                                            dragStart = null
-                                            dragEnd = null
-                                        },
-                                    )
-                                },
-                        )
-
-                        val from = dragStart
-                        val to = dragEnd
-                        if (state.editMode && from != null && to != null) {
-                            Canvas(Modifier.matchParentSize()) {
-                                drawRect(
-                                    color = Color(state.markingColor.argb),
-                                    topLeft = Offset(minOf(from.x, to.x), minOf(from.y, to.y)),
-                                    size = Size(
-                                        kotlin.math.abs(to.x - from.x),
-                                        kotlin.math.abs(to.y - from.y),
-                                    ),
-                                    style = Stroke(width = 3.dp.toPx()),
-                                )
-                            }
-                        }
-                    }
-
-                    if (state.editMode) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "고칠 코드 위를 손가락으로 감싸듯 그으면 넣을 코드를 고를 수 있습니다.",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Image(
+                        bitmap = preview.asImageBitmap(),
+                        contentDescription = if (showResult) "변환된 악보" else "원본 악보",
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp)),
+                    )
                 }
             }
         }
@@ -651,23 +589,22 @@ fun SheetConverterScreen(
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                                 Text(
-                                    "못 바꾼 코드를 위 그림에서 손가락으로 감싸면 " +
-                                        "넣을 코드를 골라 채울 수 있습니다.",
+                                    "악보를 크게 열어, 못 바꾼 코드를 눌러 채웁니다. " +
+                                        "악보에 적힌 코드를 고르면 바뀐 코드가 자동으로 들어갑니다.",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            Switch(
-                                checked = state.editMode,
-                                onCheckedChange = viewModel::setEditMode,
-                            )
+                            OutlinedButton(onClick = { viewModel.setEditMode(true) }) {
+                                Text("열기")
+                            }
                         }
 
                         state.manualEdits.forEach { edit ->
                             HorizontalDivider(Modifier.padding(vertical = 10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    edit.chord.prettySymbol,
+                                    "${edit.original.prettySymbol} → ${edit.converted.prettySymbol}",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = Color(state.markingColor.argb),
                                     modifier = Modifier.weight(1f),
@@ -927,48 +864,6 @@ private fun LeftBehindWarning(
 
 /** Below this width a page's chord symbols are too small to read reliably. */
 private const val LOW_RESOLUTION_WIDTH = 1600
-
-/**
- * Turns a gesture over the preview into a box on the source page.
- *
- * The preview is the page scaled to the panel's width, so one ratio maps both axes. A
- * flick too small to be a deliberate region is treated as a tap and grown to the size a
- * chord occupies on this page, which is what someone pointing at one symbol means.
- */
-private fun sourceRectOf(
-    from: Offset,
-    to: Offset,
-    viewSize: IntSize,
-    bitmapWidth: Int,
-    bannerHeight: Int,
-    fallback: android.graphics.Rect?,
-): android.graphics.Rect? {
-    if (viewSize.width <= 0 || bitmapWidth <= 0) return null
-    val scale = bitmapWidth.toFloat() / viewSize.width
-
-    val left = ((minOf(from.x, to.x)) * scale).toInt()
-    val right = ((maxOf(from.x, to.x)) * scale).toInt()
-    val top = ((minOf(from.y, to.y)) * scale).toInt() - bannerHeight
-    val bottom = ((maxOf(from.y, to.y)) * scale).toInt() - bannerHeight
-
-    val width = right - left
-    val height = bottom - top
-    val typicalWidth = fallback?.width() ?: (bitmapWidth / 26)
-    val typicalHeight = fallback?.height() ?: (bitmapWidth / 60)
-
-    return if (width < typicalWidth / 2 || height < typicalHeight / 2) {
-        val centreX = (left + right) / 2
-        val centreY = (top + bottom) / 2
-        android.graphics.Rect(
-            centreX - typicalWidth / 2,
-            centreY - typicalHeight / 2,
-            centreX + typicalWidth / 2,
-            centreY + typicalHeight / 2,
-        )
-    } else {
-        android.graphics.Rect(left, top, right, bottom)
-    }
-}
 
 @Composable
 private fun HowToCard(modifier: Modifier = Modifier) {

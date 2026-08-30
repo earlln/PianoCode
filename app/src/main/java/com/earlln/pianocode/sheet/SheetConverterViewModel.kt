@@ -34,7 +34,10 @@ import kotlinx.coroutines.withContext
 data class ManualChord(
     val id: String,
     val bounds: Rect,
-    val chord: Chord,
+    /** What the page says there, as the user read it off the sheet. */
+    val original: Chord,
+    /** Where that lands in the target key — this is what gets drawn. */
+    val converted: Chord,
 )
 
 /** A region the user has marked out, waiting for them to say what belongs there. */
@@ -42,7 +45,7 @@ data class PendingEdit(
     val bounds: Rect,
     /** What the page appears to say there, when the reader saw something it could not use. */
     val originalText: String? = null,
-    /** Where that reading would land in the target key, offered as a one-tap answer. */
+    /** What the reader thinks the page says there, offered as a one-tap answer. */
     val suggestion: Chord? = null,
     /** Set when the user is correcting an entry they already placed. */
     val replacingId: String? = null,
@@ -107,7 +110,7 @@ data class SheetConverterState(
     /** Everything that will be painted: the automatic conversions plus the hand-placed ones. */
     val replacements: List<Pair<Rect, String>>
         get() {
-            val manual = manualEdits.map { it.bounds to it.chord.symbol }
+            val manual = manualEdits.map { it.bounds to it.converted.symbol }
             val automatic = conversions
                 .filter { (detected, _) -> detected.id !in disabledIds }
                 // A hand-placed chord wins over whatever the reader put in the same spot.
@@ -235,22 +238,39 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
      * When the reader saw text there but could not use it, that text is offered already
      * transposed, so the common case — a symbol it simply missed — is one more tap.
      */
-    fun beginEdit(bounds: Rect) {
+    fun beginEdit(spot: Rect) {
         val current = _state.value
+        // A tap arrives as a point. Grow it to the size a chord occupies on this page, which
+        // is what pointing at one symbol means.
+        val typical = current.typicalChordBounds
+        val bounds = if (spot.width() > 0 && spot.height() > 0) {
+            spot
+        } else {
+            val width = (typical?.width() ?: 90).coerceAtLeast(20)
+            val height = (typical?.height() ?: 40).coerceAtLeast(12)
+            Rect(
+                spot.left - width / 2,
+                spot.top - height / 2,
+                spot.left + width / 2,
+                spot.top + height / 2,
+            )
+        }
         val nearby = current.missed.firstOrNull { overlapsRect(it.bounds, bounds) }
         val parsed = nearby?.let { ChordParser.parse(it.text, requireUppercaseRoot = true) }
-        val suggestion = parsed?.let {
-            Transposer.convert(it, current.sourceKey, current.targetKey, current.mode).converted
-        }
         _state.update {
             it.copy(
                 pendingEdit = PendingEdit(
                     bounds = nearby?.bounds ?: bounds,
                     originalText = nearby?.text,
-                    suggestion = suggestion,
+                    suggestion = parsed,
                 ),
             )
         }
+    }
+
+    /** Where a chord printed on this page lands under the current settings. */
+    fun transposeForPage(chord: Chord): Chord = _state.value.let { current ->
+        Transposer.convert(chord, current.sourceKey, current.targetKey, current.mode).converted
     }
 
     /** Reopens the picker for a chord already placed by hand. */
@@ -260,7 +280,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
             it.copy(
                 pendingEdit = PendingEdit(
                     bounds = existing.bounds,
-                    suggestion = existing.chord,
+                    suggestion = existing.original,
                     replacingId = id,
                 ),
             )
@@ -269,14 +289,22 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
     fun cancelEdit() = _state.update { it.copy(pendingEdit = null) }
 
-    /** Places [chord] in the marked region. */
-    fun applyEdit(chord: Chord) {
+    /**
+     * Places the chord the page already carries at the marked spot.
+     *
+     * [original] is what the user read off the sheet; the conversion is worked out here so
+     * they never have to do it themselves — which is the point of the app.
+     */
+    fun applyEdit(original: Chord) {
         val pending = _state.value.pendingEdit ?: return
         _state.update { current ->
             val id = pending.replacingId ?: "manual-${System.currentTimeMillis()}"
-            val kept = current.manualEdits.filterNot { it.id == id }
+            val converted = Transposer.convert(
+                original, current.sourceKey, current.targetKey, current.mode,
+            ).converted
             current.copy(
-                manualEdits = kept + ManualChord(id, pending.bounds, chord),
+                manualEdits = current.manualEdits.filterNot { it.id == id } +
+                    ManualChord(id, pending.bounds, original, converted),
                 pendingEdit = null,
                 resultBitmap = null,
             )

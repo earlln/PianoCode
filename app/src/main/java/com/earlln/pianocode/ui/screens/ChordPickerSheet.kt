@@ -38,18 +38,19 @@ import com.earlln.pianocode.music.ChordQuality
 import com.earlln.pianocode.music.Note
 
 /**
- * Asks which chord belongs in a spot the user marked on the sheet.
+ * Asks what the sheet already says at the spot the user marked.
  *
- * Recognition will always leave a few symbols behind, and chasing them by tightening the
- * reader costs correct readings elsewhere. Placing the last few by hand is quicker and
- * certain — so when the reader saw something it could not use, its transposition is offered
- * straight away and the whole catalogue sits underneath for everything else.
+ * The chord to write is not the one to ask about: the page is in front of the reader in the
+ * old key, so they can see `C♯m7` printed there, while working out that it becomes `Bm7` is
+ * the app's job and the whole reason to use it. So the picker takes the printed chord and
+ * shows where it lands, and [transpose] turns the answer into what gets drawn.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChordPickerSheet(
     originalText: String?,
     suggestion: Chord?,
+    transpose: (Chord) -> Chord,
     onDismiss: () -> Unit,
     onPick: (Chord) -> Unit,
 ) {
@@ -64,19 +65,21 @@ fun ChordPickerSheet(
     ) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Text(
-                "이 자리에 넣을 코드",
+                "악보에 원래 적힌 코드",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
-            if (originalText != null) {
-                Text(
-                    "악보에서 읽은 글자: $originalText",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-                )
-            }
+            Text(
+                if (originalText != null) {
+                    "악보에서 읽은 글자: $originalText · 고르면 바뀐 코드가 자동으로 들어갑니다"
+                } else {
+                    "바뀐 코드는 자동으로 계산해 넣습니다"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
 
             if (suggestion != null) {
                 Spacer(Modifier.height(10.dp))
@@ -86,7 +89,9 @@ fun ChordPickerSheet(
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp),
                 ) {
-                    Text("${suggestion.prettySymbol} 넣기")
+                    Text(
+                        "${suggestion.prettySymbol} → ${transpose(suggestion).prettySymbol} 넣기",
+                    )
                 }
             }
 
@@ -136,6 +141,7 @@ fun ChordPickerSheet(
             LazyColumn(Modifier.heightIn(max = 280.dp)) {
                 items(ChordQuality.byFamily(family), key = { it.id }) { quality ->
                     val chord = Chord(root, quality)
+                    val converted = transpose(chord)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -146,13 +152,23 @@ fun ChordPickerSheet(
                         Text(
                             chord.prettySymbol,
                             style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.width(110.dp),
+                            modifier = Modifier.width(96.dp),
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Column {
-                            Text(quality.koreanName, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "→",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                chord.notes.joinToString(" ") { it.prettyName },
+                                converted.prettySymbol,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                quality.koreanName,
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
