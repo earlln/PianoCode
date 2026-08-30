@@ -12,6 +12,24 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
+/**
+ * What one pass over a page found.
+ *
+ * [missed] matters as much as [chords]: text that looks like a chord but could not be read
+ * is text the converter will leave untouched, and a page where only some symbols moved is
+ * a page in two keys at once. The UI warns about these rather than quietly shipping them.
+ */
+data class SheetScan(
+    val chords: List<DetectedChord>,
+    val missed: List<MissedCandidate>,
+)
+
+/** Chord-looking text the parser refused, kept so the user can be told what was skipped. */
+data class MissedCandidate(
+    val text: String,
+    val bounds: Rect,
+)
+
 /** A chord symbol found on the page, with the box it occupies in the source bitmap. */
 data class DetectedChord(
     val id: String,
@@ -36,7 +54,7 @@ class SheetChordRecognizer {
 
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-    suspend fun recognize(bitmap: Bitmap): List<DetectedChord> {
+    suspend fun recognize(bitmap: Bitmap): SheetScan {
         val image = InputImage.fromBitmap(bitmap, 0)
         val result: Text = suspendCoroutine { continuation ->
             recognizer.process(image)
@@ -45,6 +63,7 @@ class SheetChordRecognizer {
         }
 
         val detected = mutableListOf<DetectedChord>()
+        val missed = mutableListOf<MissedCandidate>()
         var index = 0
         for (block in result.textBlocks) {
             for (line in block.lines) {
@@ -57,7 +76,13 @@ class SheetChordRecognizer {
                     val cleaned = text.trim { it in TRIM_CHARS }
                     if (cleaned.isEmpty() || cleaned.length > MAX_SYMBOL_LENGTH) continue
 
-                    val chord = ChordParser.parse(cleaned, requireUppercaseRoot = true) ?: continue
+                    val chord = ChordParser.parse(cleaned, requireUppercaseRoot = true)
+                    if (chord == null) {
+                        if (looksLikeAChord(cleaned) && !lineIsLyric) {
+                            missed += MissedCandidate(cleaned, bounds)
+                        }
+                        continue
+                    }
 
                     // A single letter inside a sentence is almost always a word, not a chord.
                     if (lineIsLyric && cleaned.length <= 2) continue
@@ -73,7 +98,10 @@ class SheetChordRecognizer {
                 }
             }
         }
-        return detected.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+        return SheetScan(
+            chords = detected.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left })),
+            missed = missed.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left })),
+        )
     }
 
     fun close() = recognizer.close()
@@ -94,6 +122,24 @@ class SheetChordRecognizer {
             }
             return chordish * 2 < words.size
         }
+
+        /**
+         * Whether unparsed text still has the shape of a chord symbol: it starts on a note
+         * letter and is short. `Bb7sus`, `Amaj`, `F#m11` and OCR debris like `Cm7|` all
+         * qualify, so the user hears about them instead of finding them on the output.
+         */
+        fun looksLikeAChord(text: String): Boolean =
+            text.length <= MAX_SYMBOL_LENGTH && CHORD_SHAPE.matches(text)
+
+        /**
+         * A note letter, an optional accidental, then only the pieces a chord suffix is made
+         * of. Words that happen to start on a note letter — "Come", "And", "Every" — fail on
+         * their second character, so prose is not reported as a missed chord.
+         */
+        val CHORD_SHAPE = Regex(
+            "^[A-G][#b♯♭]?" +
+                "(maj|min|dim|aug|sus|add|alt|M|m|o|°|ø|Δ|[0-9#b♯♭/()+-]|[A-G])*$"
+        )
 
         fun confidenceOf(text: String, lineIsLyric: Boolean): Float {
             var score = 0.6f

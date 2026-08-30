@@ -8,6 +8,32 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-30
+
+### 추가됨 (Added)
+
+- 모든 화면 상단에 `PianoCode v<버전> by Earlln.com` 표기.
+- 변환 결과 이미지 위쪽에 무엇이 바뀌었는지 적은 띠를 그립니다.
+  (`PianoCode · A → C (+3반음) · 코드 심볼만 변경`)
+- 변환 전에 **원래 조성으로 남는 부분**을 알려 줍니다. 코드처럼 보이지만 읽지 못한 글자와
+  직접 꺼 둔 코드의 개수를 세어, 한 악보에 두 조성이 섞이는 일을 막습니다.
+- 꺼 둔 코드를 한 번에 되돌리는 `꺼 둔 코드 모두 켜기` 버튼.
+
+### 고쳐짐 (Fixed)
+
+- 변환된 코드가 잘려 그려질 수 있던 문제. 이전에는 코드를 하나씩 지우고 그렸기 때문에,
+  바로 오른쪽 코드의 지우기 영역이 앞 코드의 긴 심볼(`C♯m7` → `Em7` 등) 꼬리를
+  덮어 버릴 수 있었습니다. 이제 모든 자리를 먼저 지운 뒤 글자를 그립니다.
+- 색 추출을 원본 이미지에서만 하도록 바꿔, 앞서 그린 글자가 다음 코드의
+  종이색·잉크색 판단에 섞이지 않게 했습니다.
+
+### 검증 (Verified)
+
+- 실제 악보(손경민 `충만`)의 A장조 코드 45개를 C장조로 옮기는 테스트를 추가했습니다.
+  `A→C`, `E/G♯→G/B`, `F♯m7→Am7`, `C♯m7→Em7`, `D→F`, `A/C♯→C/E`, `Bm7→Dm7`,
+  `E7→G7`, `C♯7→E7` 전부를 마디 순서대로 확인하고, 모든 조성으로의 이조와
+  A장조로의 왕복도 함께 검사합니다.
+
 ## [1.0.0] - 2026-08-30
 
 첫 번째 정식 릴리즈입니다.
@@ -39,5 +65,6 @@ GitHub Actions가 APK를 빌드해 릴리즈에 첨부합니다.
 - 글자 인식은 ML Kit의 기기 내 처리 모델을 사용합니다. 사진은 서버로 전송되지 않습니다.
 - 최소 지원 버전은 Android 7.0(API 24), 타깃은 Android 15(API 35)입니다.
 
-[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/earlln/PianoCode/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/earlln/PianoCode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/earlln/PianoCode/releases/tag/v1.0.0

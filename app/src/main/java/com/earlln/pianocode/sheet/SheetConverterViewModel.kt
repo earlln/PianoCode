@@ -28,6 +28,7 @@ data class SheetConverterState(
     val sourceBitmap: Bitmap? = null,
     val resultBitmap: Bitmap? = null,
     val detected: List<DetectedChord> = emptyList(),
+    val missed: List<MissedCandidate> = emptyList(),
     val disabledIds: Set<String> = emptySet(),
     val sourceKey: Key = Key(Note(0, 0), ScaleType.MAJOR),
     val targetKey: Key = Key(Note(4, 0), ScaleType.MAJOR),
@@ -48,6 +49,19 @@ data class SheetConverterState(
 
     /** Semitones the transpose mode will move everything by. */
     val semitoneShift: Int get() = sourceKey.semitonesTo(targetKey)
+
+    /**
+     * How many symbols will stay in the original key: ones the recogniser could not read,
+     * plus ones the user switched off. Any of these leaves the page in two keys at once,
+     * so the screen shows this count rather than letting it pass unnoticed.
+     */
+    val leftBehindCount: Int get() = missed.size + disabledIds.size
+
+    /** The line stamped across the top of the converted page. */
+    val banner: String
+        get() = "PianoCode · ${sourceKey.shortName} → ${targetKey.shortName}" +
+            (if (semitoneShift == 0) "" else " (+${semitoneShift}반음)") +
+            " · 코드 심볼만 변경 (오선보 조표·음표는 원본 그대로)"
 }
 
 /**
@@ -67,6 +81,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     stage = ConverterStage.ANALYZING,
                     resultBitmap = null,
                     detected = emptyList(),
+                    missed = emptyList(),
                     disabledIds = emptySet(),
                     message = null,
                 )
@@ -80,7 +95,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 return@launch
             }
 
-            val detected = try {
+            val scan = try {
                 recognizer.recognize(bitmap)
             } catch (error: Exception) {
                 _state.update {
@@ -93,12 +108,14 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 return@launch
             }
 
+            val detected = scan.chords
             val detectedKey = Transposer.detectKey(detected.map { it.chord })
             _state.update { current ->
                 current.copy(
                     stage = ConverterStage.READY,
                     sourceBitmap = bitmap,
                     detected = detected,
+                    missed = scan.missed,
                     sourceKey = detectedKey ?: current.sourceKey,
                     keyWasDetected = detectedKey != null,
                     message = if (detected.isEmpty()) {
@@ -131,6 +148,9 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
     fun clearMessage() = _state.update { it.copy(message = null) }
 
+    /** Turns every recognised chord back on, after the user has switched some off. */
+    fun enableAll() = _state.update { it.copy(disabledIds = emptySet(), resultBitmap = null) }
+
     /** Paints the converted symbols onto a copy of the page. */
     fun renderResult() {
         val current = _state.value
@@ -148,7 +168,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     ChordReplacement(detected.bounds, conversion.converted.symbol)
                 }
             val rendered = withContext(Dispatchers.Default) {
-                SheetRenderer.render(source, replacements)
+                SheetRenderer.render(source, replacements, banner = current.banner)
             }
             _state.update {
                 it.copy(stage = ConverterStage.READY, resultBitmap = rendered)

@@ -118,7 +118,16 @@ fun PianoCodeApp() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(destination?.title ?: "코드 상세") },
+                    title = {
+                        Column {
+                            Text(destination?.title ?: "코드 상세")
+                            Text(
+                                "PianoCode v${BuildConfig.VERSION_NAME} by Earlln.com",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
                     navigationIcon = {
                         if (isDetail) {
                             IconButton(onClick = { navController.popBackStack() }) {

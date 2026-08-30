@@ -271,6 +271,16 @@ fun SheetConverterScreen(
             }
 
             item {
+                LeftBehindWarning(
+                    missedCount = state.missed.size,
+                    disabledCount = state.disabledIds.size,
+                    missedSamples = state.missed.take(6).map { it.text },
+                    onEnableAll = viewModel::enableAll,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+
+            item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     SectionHeader(
                         title = "인식된 코드",
@@ -434,6 +444,84 @@ private fun KeyPicker(
                 onClick = { onSelect(key) },
                 label = { Text(key.shortName) },
             )
+        }
+    }
+}
+
+/**
+ * Says how much of the page will stay in the original key.
+ *
+ * A sheet where only some symbols moved is worse than one that was never converted — the
+ * chords and the staff disagree and nothing on the page says so. Anything the recogniser
+ * could not read, or the user switched off, is counted here before they hit convert.
+ */
+@Composable
+private fun LeftBehindWarning(
+    missedCount: Int,
+    disabledCount: Int,
+    missedSamples: List<String>,
+    onEnableAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (missedCount + disabledCount > 0) {
+                MaterialTheme.colorScheme.tertiaryContainer
+            } else {
+                MaterialTheme.colorScheme.secondaryContainer
+            },
+        ),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                if (missedCount + disabledCount > 0) {
+                    "원래 조성으로 남는 부분이 있습니다"
+                } else {
+                    "찾은 코드를 모두 변환합니다"
+                },
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            if (missedCount > 0) {
+                Text(
+                    "· 코드처럼 보이지만 읽지 못한 글자 ${missedCount}곳" +
+                        if (missedSamples.isEmpty()) {
+                            ""
+                        } else {
+                            " (${missedSamples.joinToString(", ")})"
+                        },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            if (disabledCount > 0) {
+                Text(
+                    "· 직접 꺼 둔 코드 ${disabledCount}개",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            if (missedCount + disabledCount > 0) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "이 부분은 원본 그대로 남아 한 악보에 두 조성이 섞이게 됩니다. " +
+                        "저장 전에 확인해 주세요.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "오선보의 조표와 음표는 바뀌지 않습니다. 코드 심볼만 옮겨 적습니다.",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (disabledCount > 0) {
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = onEnableAll) { Text("꺼 둔 코드 모두 켜기") }
+            }
         }
     }
 }

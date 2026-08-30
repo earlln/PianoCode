@@ -28,57 +28,129 @@ object SheetRenderer {
     /** How far past its original box a longer symbol may extend before it is shrunk. */
     private const val MAX_WIDTH_GROWTH = 2.4f
 
-    fun render(source: Bitmap, replacements: List<ChordReplacement>): Bitmap {
-        val output = source.copy(Bitmap.Config.ARGB_8888, true)
+    fun render(
+        source: Bitmap,
+        replacements: List<ChordReplacement>,
+        banner: String? = null,
+    ): Bitmap {
+        val bannerHeight = if (banner == null) 0 else bannerHeightFor(source)
+        val output = Bitmap.createBitmap(
+            source.width,
+            source.height + bannerHeight,
+            Bitmap.Config.ARGB_8888,
+        )
+        val canvas = Canvas(output)
+        canvas.drawColor(Color.WHITE)
+        canvas.drawBitmap(source, 0f, bannerHeight.toFloat(), null)
+
+        if (banner != null) drawBanner(canvas, source.width, bannerHeight, banner)
         if (replacements.isEmpty()) return output
 
-        val canvas = Canvas(output)
         val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             textAlign = Paint.Align.LEFT
         }
 
-        val sorted = replacements.sortedBy { it.bounds.left }
-        sorted.forEachIndexed { index, replacement ->
+        val sorted = replacements
+            .filter { it.bounds.width() > 0 && it.bounds.height() > 0 }
+            .sortedBy { it.bounds.left }
+
+        // Colours are sampled from the untouched source, and every box is covered before
+        // any text is drawn. Doing it in one pass let a later chord's cover rectangle clip
+        // the tail of the symbol drawn just before it, which is how a long replacement such
+        // as C#m7 -> Em7 could come out half-erased.
+        val plans = sorted.map { replacement ->
             val bounds = replacement.bounds
-            if (bounds.width() <= 0 || bounds.height() <= 0) return@forEachIndexed
-
             val paper = samplePaperColor(source, bounds)
-            val ink = sampleInkColor(source, bounds, paper)
+            RenderPlan(
+                replacement = replacement,
+                paper = paper,
+                ink = sampleInkColor(source, bounds, paper),
+            )
+        }
 
-            // Cover the old symbol, with a small bleed so anti-aliased edges disappear too.
+        for (plan in plans) {
+            val bounds = plan.replacement.bounds
             val bleedX = max(2, (bounds.width() * 0.06f).roundToInt())
             val bleedY = max(2, (bounds.height() * 0.12f).roundToInt())
-            val erase = Rect(
-                (bounds.left - bleedX).coerceAtLeast(0),
-                (bounds.top - bleedY).coerceAtLeast(0),
-                (bounds.right + bleedX).coerceAtMost(output.width),
-                (bounds.bottom + bleedY).coerceAtMost(output.height),
+            fillPaint.color = plan.paper
+            canvas.drawRect(
+                (bounds.left - bleedX).coerceAtLeast(0).toFloat(),
+                (bounds.top - bleedY).coerceAtLeast(0).toFloat() + bannerHeight,
+                (bounds.right + bleedX).coerceAtMost(source.width).toFloat(),
+                (bounds.bottom + bleedY).coerceAtMost(source.height).toFloat() + bannerHeight,
+                fillPaint,
             )
-            fillPaint.color = paper
-            canvas.drawRect(erase, fillPaint)
+        }
+
+        plans.forEachIndexed { index, plan ->
+            val bounds = plan.replacement.bounds
 
             // A longer symbol may spill right, but never onto the next chord or off the page.
-            val nextLeft = sorted.drop(index + 1)
-                .firstOrNull { it.bounds.top < bounds.bottom && it.bounds.bottom > bounds.top }
-                ?.bounds?.left ?: output.width
+            val nextLeft = plans.drop(index + 1)
+                .firstOrNull {
+                    it.replacement.bounds.top < bounds.bottom &&
+                        it.replacement.bounds.bottom > bounds.top
+                }
+                ?.replacement?.bounds?.left ?: source.width
             val available = min(
                 bounds.width() * MAX_WIDTH_GROWTH,
-                (min(nextLeft, output.width) - bounds.left).toFloat(),
+                (min(nextLeft, source.width) - bounds.left).toFloat(),
             ).coerceAtLeast(bounds.width().toFloat())
 
-            textPaint.color = ink
+            textPaint.color = plan.ink
             textPaint.textSize = fittingTextSize(
-                textPaint, replacement.replacement, available, bounds.height().toFloat(),
+                textPaint, plan.replacement.replacement, available, bounds.height().toFloat(),
             )
 
             val metrics = textPaint.fontMetrics
             // Sit the new text on the same baseline the old symbol used.
             val baseline = bounds.bottom - (bounds.height() * 0.08f) - metrics.descent * 0.4f
-            canvas.drawText(replacement.replacement, bounds.left.toFloat(), baseline, textPaint)
+            canvas.drawText(
+                plan.replacement.replacement,
+                bounds.left.toFloat(),
+                baseline + bannerHeight,
+                textPaint,
+            )
         }
         return output
+    }
+
+    /** A replacement with the colours sampled for it, worked out before anything is painted. */
+    private data class RenderPlan(
+        val replacement: ChordReplacement,
+        val paper: Int,
+        val ink: Int,
+    )
+
+    private fun bannerHeightFor(source: Bitmap): Int =
+        (source.width * 0.045f).roundToInt().coerceIn(30, 96)
+
+    /**
+     * Writes what happened across the top of the page.
+     *
+     * The staff itself still carries the original key signature and melody — only the chord
+     * symbols moved — so the sheet says so in its own margin rather than leaving a musician
+     * to work out why the notes and the chords disagree.
+     */
+    private fun drawBanner(canvas: Canvas, width: Int, height: Int, text: String) {
+        val background = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(27, 23, 37) }
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), background)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            textAlign = Paint.Align.LEFT
+            textSize = height * 0.44f
+        }
+        val padding = height * 0.28f
+        val maxWidth = width - padding * 2
+        val measured = paint.measureText(text)
+        if (measured > maxWidth) paint.textSize *= maxWidth / measured
+        val metrics = paint.fontMetrics
+        val baseline = height / 2f - (metrics.ascent + metrics.descent) / 2f
+        canvas.drawText(text, padding, baseline, paint)
     }
 
     /** Largest text size that fits [maxWidth] while staying near the original cap height. */
