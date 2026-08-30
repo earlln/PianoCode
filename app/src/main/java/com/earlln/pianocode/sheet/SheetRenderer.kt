@@ -28,15 +28,38 @@ object SheetRenderer {
     /** How far past its original box a longer symbol may extend before it is shrunk. */
     private const val MAX_WIDTH_GROWTH = 2.4f
 
+    /** Default marking colour, used until a page has been looked at. */
+    val CONVERTED_INK: Int get() = MarkingColor.VIOLET.argb
+
     /**
-     * The colour a converted symbol is written in.
+     * Picks a colour for the converted symbols that the page is not already written in.
      *
-     * Drawing the new chord in the page's own ink makes it indistinguishable from a symbol
-     * that was never touched, so a page the recogniser only half converted looks finished.
-     * A deep violet reads clearly on white or cream paper and photocopies dark enough to
-     * stay legible.
+     * Sheets are usually black on white, where violet stands out plainly — but a sheet
+     * printed or annotated in blue or purple would swallow it, and the marking would say
+     * nothing. So the page's own ink is measured first and the most distant readable colour
+     * wins, subject to still being dark enough against the paper to read.
      */
-    const val CONVERTED_INK = 0xFF5B3FD6.toInt()
+    fun pickMarkingColor(source: Bitmap, boxes: List<Rect>): MarkingColor {
+        val samples = boxes.take(12).filter { it.width() > 0 && it.height() > 0 }
+        if (samples.isEmpty()) return MarkingColor.VIOLET
+
+        val paper = averageColor(samples.map { samplePaperColor(source, it) })
+        val ink = averageColor(samples.map { sampleInkColor(source, it, paper) })
+
+        val readable = MarkingColor.entries.filter {
+            kotlin.math.abs(luminance(it.argb) - luminance(paper)) >= 90
+        }
+        val choices = readable.ifEmpty { MarkingColor.entries.toList() }
+        return choices.maxByOrNull { distance(it.argb, ink) } ?: MarkingColor.VIOLET
+    }
+
+    /** How far apart two colours look, weighted the way the eye weighs the channels. */
+    private fun distance(a: Int, b: Int): Double {
+        val dr = (Color.red(a) - Color.red(b)) * 0.30
+        val dg = (Color.green(a) - Color.green(b)) * 0.59
+        val db = (Color.blue(a) - Color.blue(b)) * 0.11
+        return dr * dr + dg * dg + db * db
+    }
 
     /**
      * Paints [replacements] onto a copy of [source].

@@ -35,6 +35,7 @@ data class SheetConverterState(
     val mode: ConversionMode = ConversionMode.TRANSPOSE,
     val keyWasDetected: Boolean = false,
     val markConverted: Boolean = true,
+    val markingColor: MarkingColor = MarkingColor.VIOLET,
     val message: String? = null,
 ) {
     val enabled: List<DetectedChord> get() = detected.filterNot { it.id in disabledIds }
@@ -69,7 +70,7 @@ data class SheetConverterState(
     /** The line stamped across the top of the converted page. */
     val banner: String
         get() = "PianoCode · ${sourceKey.shortName} → ${targetKey.shortName} ($shiftText)" +
-            (if (markConverted) " · 보라색이 바뀐 코드" else "") +
+            (if (markConverted) " · ${markingColor.koreanName}이 바뀐 코드" else "") +
             " · 코드 심볼만 변경 (오선보 조표·음표는 원본 그대로)"
 }
 
@@ -119,6 +120,11 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
             val detected = scan.chords
             val detectedKey = Transposer.detectKey(detected.map { it.chord })
+            // A page already written in violet would swallow the default marking, so the
+            // colour is chosen against this page's own ink rather than assumed.
+            val marking = withContext(Dispatchers.Default) {
+                SheetRenderer.pickMarkingColor(bitmap, detected.map { it.bounds })
+            }
             _state.update { current ->
                 current.copy(
                     stage = ConverterStage.READY,
@@ -127,6 +133,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     missed = scan.missed,
                     sourceKey = detectedKey ?: current.sourceKey,
                     keyWasDetected = detectedKey != null,
+                    markingColor = marking,
                     message = if (detected.isEmpty()) {
                         "코드를 찾지 못했습니다. 코드 심볼이 또렷하게 보이는 사진으로 다시 시도해 보세요."
                     } else {
@@ -159,6 +166,10 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
     fun setMarkConverted(mark: Boolean) =
         _state.update { it.copy(markConverted = mark, resultBitmap = null) }
 
+    /** Overrides the colour chosen for this page. */
+    fun setMarkingColor(color: MarkingColor) =
+        _state.update { it.copy(markingColor = color, resultBitmap = null) }
+
     fun clearMessage() = _state.update { it.copy(message = null) }
 
     /** Surfaces a problem the UI hit before the view model was involved. */
@@ -188,7 +199,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     source = source,
                     replacements = replacements,
                     banner = current.banner,
-                    highlightInk = if (current.markConverted) SheetRenderer.CONVERTED_INK else null,
+                    highlightInk = if (current.markConverted) current.markingColor.argb else null,
                 )
             }
             _state.update {

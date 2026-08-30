@@ -72,8 +72,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.sheet.ConverterStage
+import com.earlln.pianocode.sheet.MarkingColor
 import com.earlln.pianocode.sheet.SheetConverterViewModel
-import com.earlln.pianocode.sheet.SheetRenderer
 import com.earlln.pianocode.ui.components.SectionHeader
 import com.earlln.pianocode.util.ImageIo
 
@@ -341,14 +341,15 @@ fun SheetConverterScreen(
                             Modifier
                                 .size(18.dp)
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(Color(SheetRenderer.CONVERTED_INK)),
+                                .background(Color(state.markingColor.argb)),
                         )
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text("바뀐 코드를 색으로 구분", style = MaterialTheme.typography.titleMedium)
                             Text(
                                 if (state.markConverted) {
-                                    "새로 쓴 코드는 보라색, 원래 조성으로 남은 코드는 검정입니다."
+                                    "새로 쓴 코드는 ${state.markingColor.koreanName}, " +
+                                        "원래 조성으로 남은 코드는 악보 원래 색입니다."
                                 } else {
                                     "악보 원래 잉크색으로 씁니다. 인쇄용으로 깔끔하지만 " +
                                         "무엇이 바뀌었는지 구분되지 않습니다."
@@ -360,6 +361,40 @@ fun SheetConverterScreen(
                         Switch(
                             checked = state.markConverted,
                             onCheckedChange = viewModel::setMarkConverted,
+                        )
+                    }
+                }
+            }
+
+            if (state.markConverted) {
+                item {
+                    Column {
+                        LabelRow("표시 색")
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                        ) {
+                            items(MarkingColor.entries.toList(), key = { it.name }) { color ->
+                                FilterChip(
+                                    selected = state.markingColor == color,
+                                    onClick = { viewModel.setMarkingColor(color) },
+                                    leadingIcon = {
+                                        Box(
+                                            Modifier
+                                                .size(14.dp)
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(color.argb)),
+                                        )
+                                    },
+                                    label = { Text(color.koreanName) },
+                                )
+                            }
+                        }
+                        Text(
+                            "악보 잉크와 가장 다른 색이 자동으로 골라집니다. 직접 바꿔도 됩니다.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                         )
                     }
                 }
