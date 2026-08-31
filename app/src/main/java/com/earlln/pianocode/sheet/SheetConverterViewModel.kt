@@ -279,12 +279,10 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
     }
 
     /**
-     * Handles a tap on the page.
+     * Handles a tap on the page: choosing what to act on, never acting.
      *
-     * Landing on a chord selects it — several can be held at once, so a misreading repeated
-     * down the page is corrected in one go. Landing on a flagged leftover picks that out
-     * instead, to be adopted as a chord or waved away. Landing on bare paper offers to add
-     * a chord the reader never saw.
+     * A tap has to be safe. The page is read at least as often as it is corrected, and a
+     * screen where brushing the paper opens a chord picker cannot be read on.
      */
     fun tapAt(spot: Rect) {
         val current = _state.value
@@ -314,10 +312,50 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
             return
         }
 
+        _state.update { it.copy(selectedIds = emptySet(), selectedMissed = null) }
+    }
+
+    /**
+     * Handles a press held on the page: says what belongs there, in one gesture.
+     *
+     * Holding a finger on a symbol is an unambiguous "this one", so it goes straight to the
+     * picker rather than selecting and waiting to be told what to do with the selection.
+     * Held on bare paper it offers a chord the reader never found.
+     */
+    fun holdAt(spot: Rect) {
+        val current = _state.value
+        val hit = current.entries.firstOrNull { current.overlaps(it.bounds, spot) }
+        if (hit != null) {
+            _state.update {
+                it.copy(
+                    selectedIds = setOf(hit.id),
+                    selectedMissed = null,
+                    pickerTarget = PickerTarget.Entries(setOf(hit.id)),
+                )
+            }
+            return
+        }
+
+        val leftover = current.openMissed.firstOrNull { current.overlaps(it.bounds, spot) }
+        if (leftover != null) {
+            _state.update {
+                it.copy(
+                    selectedIds = emptySet(),
+                    selectedMissed = null,
+                    pickerTarget = PickerTarget.Spot(leftover.bounds, leftover.text),
+                )
+            }
+            return
+        }
+
         _state.update {
             it.copy(
-                pickerTarget = PickerTarget.Spot(grow(spot, current.typicalChordBounds), null),
+                selectedIds = emptySet(),
                 selectedMissed = null,
+                pickerTarget = PickerTarget.Spot(
+                    grow(spot, current.typicalChordBounds),
+                    null,
+                ),
             )
         }
     }

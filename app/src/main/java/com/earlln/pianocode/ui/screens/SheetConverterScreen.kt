@@ -10,6 +10,8 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,7 +34,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Collections
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -133,7 +134,6 @@ fun SheetConverterScreen(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     var showResult by remember { mutableStateOf(true) }
-    var showViewer by remember { mutableStateOf(false) }
     // Converting every reading is cheap, but do it once per state change, not per row.
     val conversions = remember(state.entries, state.sourceKey, state.targetKey, state.mode) {
         state.conversions
@@ -202,24 +202,15 @@ fun SheetConverterScreen(
         if (state.resultBitmap != null) showResult = true
     }
 
-    state.sourceBitmap?.let { source ->
-        if (showViewer) {
-            SheetViewerDialog(
-                original = source,
-                converted = state.resultBitmap,
-                startWithConverted = showResult && state.resultBitmap != null,
-                onClose = { showViewer = false },
-            )
-        }
-    }
-
-    // The editor works on the sheet as printed. Correcting asks what the page carries, so
-    // the page shown has to be the one carrying it — and an edit clears the rendered result,
-    // which would otherwise swap the image out from under the finger mid-edit.
+    // One page screen for both reading and correcting: enlarging a sheet and fixing a chord
+    // on it are the same reach, and making them separate screens meant choosing beforehand
+    // which one this was going to be.
     val editorPage = state.sourceBitmap
     if (state.editorOpen && editorPage != null) {
         SheetEditorDialog(
-            bitmap = editorPage,
+            original = editorPage,
+            converted = state.resultBitmap,
+            startWithConverted = showResult && state.resultBitmap != null,
             markingColor = state.markingColor.argb,
             entries = state.entries,
             missed = state.openMissed,
@@ -227,6 +218,7 @@ fun SheetConverterScreen(
             selectedMissed = state.selectedMissed,
             changedCount = state.changedCount,
             onTap = viewModel::tapAt,
+            onHold = viewModel::holdAt,
             onCorrect = viewModel::beginCorrection,
             onDelete = viewModel::deleteSelected,
             onAdoptMissed = viewModel::adoptMissed,
@@ -367,11 +359,9 @@ fun SheetConverterScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            // A transform detector consumed every drag across the page, so
-                            // the list underneath could not be scrolled by dragging the one
-                            // thing filling the screen. A tap detector leaves a drag alone.
+                            .onSecondFinger { viewModel.openEditor() }
                             .pointerInput(preview) {
-                                detectTapGestures(onDoubleTap = { showViewer = true })
+                                detectTapGestures(onDoubleTap = { viewModel.openEditor() })
                             },
                     )
 
@@ -382,18 +372,12 @@ fun SheetConverterScreen(
                             context = context,
                             onConvert = viewModel::renderResult,
                             onEdit = viewModel::openEditor,
-                            onView = { showViewer = true },
                             onSave = { viewModel.saveResult {} },
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            if (state.resultBitmap != null) {
-                                "그림을 두 번 두드려도 열립니다. 확대한 자리 그대로 " +
-                                    "원본과 변환본을 번갈아 볼 수 있습니다."
-                            } else {
-                                "그림을 두 번 두드리면 크게 볼 수 있습니다. " +
-                                    "아래에서 조성과 세부 설정을 바꿀 수 있습니다."
-                            },
+                            "그림을 두 손가락으로 벌리거나 두 번 두드리면 크게 열립니다. " +
+                                "거기서 코드를 꾹 누르면 바로 고칠 수 있습니다.",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -694,7 +678,6 @@ private fun SheetActions(
     context: Context,
     onConvert: () -> Unit,
     onEdit: () -> Unit,
-    onView: () -> Unit,
     onSave: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -715,17 +698,10 @@ private fun SheetActions(
         }
 
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onView, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Filled.ZoomIn, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text(if (state.resultBitmap != null) "원본과 비교" else "크게 보기")
-            }
-            OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Filled.Edit, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("직접 고치기")
-            }
+        OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.ZoomIn, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text(if (state.resultBitmap != null) "크게 보기 · 원본 비교 · 고치기" else "크게 보기 · 고치기")
         }
 
         if (state.resultBitmap != null) {
@@ -752,6 +728,29 @@ private fun SheetActions(
                 }
             }
         }
+    }
+}
+
+/**
+ * Runs [onPinch] the moment a second finger lands, leaving one-finger drags alone.
+ *
+ * A transform detector claims every drag that crosses the element, and here the element is
+ * the page — most of the screen — so the list underneath could only be scrolled from the
+ * margins beside it. Counting pointers instead lets a scroll through untouched and reacts
+ * only to the gesture that unambiguously means "bigger".
+ */
+private fun Modifier.onSecondFinger(onPinch: () -> Unit): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        var fired = false
+        do {
+            val event = awaitPointerEvent()
+            if (!fired && event.changes.count { it.pressed } >= 2) {
+                fired = true
+                event.changes.forEach { it.consume() }
+                onPinch()
+            }
+        } while (event.changes.any { it.pressed })
     }
 }
 

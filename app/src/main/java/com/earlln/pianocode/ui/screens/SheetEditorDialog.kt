@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -78,7 +79,9 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun SheetEditorDialog(
-    bitmap: Bitmap,
+    original: Bitmap,
+    converted: Bitmap?,
+    startWithConverted: Boolean,
     markingColor: Int,
     entries: List<SheetEntry>,
     missed: List<MissedCandidate>,
@@ -86,6 +89,7 @@ fun SheetEditorDialog(
     selectedMissed: String?,
     changedCount: Int,
     onTap: (Rect) -> Unit,
+    onHold: (Rect) -> Unit,
     onCorrect: () -> Unit,
     onDelete: () -> Unit,
     onAdoptMissed: () -> Unit,
@@ -94,7 +98,24 @@ fun SheetEditorDialog(
     onApply: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val image = remember(bitmap) { bitmap.asImageBitmap() }
+    val originalImage = remember(original) { original.asImageBitmap() }
+    val convertedImage = remember(converted) { converted?.asImageBitmap() }
+    var showConverted by remember(converted) {
+        mutableStateOf(startWithConverted && converted != null)
+    }
+    val bitmap = if (showConverted && converted != null) converted else original
+    val image = if (showConverted && convertedImage != null) convertedImage else originalImage
+
+    // The converted page carries a banner above the sheet and is taller by exactly that
+    // much. Lifting it by the difference puts the two pages' staves on the same pixels, so
+    // the outlines fit either page and switching is a comparison rather than a jump.
+    val bannerOffset =
+        if (showConverted && converted != null) {
+            (converted.height - original.height).coerceAtLeast(0)
+        } else {
+            0
+        }
+
     val density = LocalDensity.current
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -117,7 +138,7 @@ fun SheetEditorDialog(
     // The page is laid out to the screen's width at zoom 1, so one number scales both axes
     // and the mapping back to page coordinates stays a division.
     fun baseScale(): Float =
-        if (viewport.width <= 0f) 1f else viewport.width / bitmap.width
+        if (viewport.width <= 0f) 1f else viewport.width / original.width
 
     fun scale(): Float = baseScale() * zoom
 
@@ -125,8 +146,8 @@ fun SheetEditorDialog(
         Offset((point.x - pan.x) / scale(), (point.y - pan.y) / scale())
 
     fun clampPan(candidate: Offset): Offset {
-        val drawnWidth = bitmap.width * scale()
-        val drawnHeight = bitmap.height * scale()
+        val drawnWidth = original.width * scale()
+        val drawnHeight = original.height * scale()
         val minX = minOf(0f, viewport.width - drawnWidth)
         val minY = minOf(0f, viewport.height - drawnHeight)
         val maxX = maxOf(0f, viewport.width - drawnWidth)
@@ -177,7 +198,7 @@ fun SheetEditorDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "직접 고치기",
+                    "악보 보기 · 고치기",
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )
@@ -202,6 +223,30 @@ fun SheetEditorDialog(
                 Text("고친 대로 악보에 ${changedCount}개 바꿔 그리기")
             }
 
+            if (converted != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = !showConverted,
+                        onClick = { showConverted = false },
+                        label = { Text("원본") },
+                    )
+                    FilterChip(
+                        selected = showConverted,
+                        onClick = { showConverted = true },
+                        label = { Text("변환본") },
+                    )
+                    Text(
+                        "확대한 자리 그대로 번갈아 봅니다",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -221,7 +266,8 @@ fun SheetEditorDialog(
                         )
                     } else {
                         Text(
-                            "고칠 자리를 누르세요. 코드는 여러 개를 한 번에 고를 수 있습니다.",
+                            "코드를 꾹 누르면 바로 고칩니다. 짧게 누르면 골라 두었다가 " +
+                                "여러 개를 한 번에 처리합니다.",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -245,7 +291,7 @@ fun SheetEditorDialog(
                         .onSizeChanged {
                             viewport = Size(it.width.toFloat(), it.height.toFloat())
                         }
-                        .pointerInput(bitmap) {
+                        .pointerInput(original) {
                             detectTransformGestures { centroid, drag, gestureZoom, _ ->
                                 val previous = zoom
                                 zoom = (zoom * gestureZoom).coerceIn(1f, 10f)
@@ -255,17 +301,31 @@ fun SheetEditorDialog(
                                 pan = clampPan(centroid - (centroid - pan) * growth + drag)
                             }
                         }
-                        .pointerInput(bitmap) {
-                            detectTapGestures { tap ->
-                                val page = toPage(tap)
-                                onTap(Rect(page.x.toInt(), page.y.toInt(), page.x.toInt(), page.y.toInt()))
+                        .pointerInput(original) {
+                            fun at(point: Offset): Rect {
+                                val page = toPage(point)
+                                val x = page.x.toInt()
+                                val y = page.y.toInt()
+                                return Rect(x, y, x, y)
                             }
+                            detectTapGestures(
+                                onTap = { onTap(at(it)) },
+                                onLongPress = { onHold(at(it)) },
+                                onDoubleTap = { tap ->
+                                    val previous = zoom
+                                    zoom = if (zoom < 2.5f) 3f else 1f
+                                    pan = clampPan(tap - (tap - pan) * (zoom / previous))
+                                },
+                            )
                         },
                 ) {
                     val drawScale = scale()
                     drawImage(
                         image = image,
-                        dstOffset = IntOffset(pan.x.toInt(), pan.y.toInt()),
+                        dstOffset = IntOffset(
+                            pan.x.toInt(),
+                            (pan.y - bannerOffset * drawScale).toInt(),
+                        ),
                         dstSize = IntSize(
                             (bitmap.width * drawScale).toInt(),
                             (bitmap.height * drawScale).toInt(),
@@ -424,7 +484,8 @@ fun SheetEditorDialog(
                         shadowElevation = 4.dp,
                     ) {
                         Text(
-                            "${(zoom * 100).toInt()}% · 코드 ${entries.size}개",
+                            "${(zoom * 100).toInt()}% · " +
+                                if (showConverted) "변환본" else "원본 코드 ${entries.size}개",
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                         )

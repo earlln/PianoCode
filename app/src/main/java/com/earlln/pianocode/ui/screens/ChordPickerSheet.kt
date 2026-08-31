@@ -58,6 +58,9 @@ fun ChordPickerSheet(
     var family by remember {
         mutableStateOf(suggestion?.quality?.family ?: ChordFamily.MAJOR)
     }
+    // Slash chords are ordinary on a lead sheet — A/C#, E/G# — and without this the picker
+    // could not express one at all, so a spot read as A/C# had no right answer to choose.
+    var bass by remember { mutableStateOf(suggestion?.bass) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -137,10 +140,36 @@ fun ChordPickerSheet(
             }
 
             Spacer(Modifier.height(12.dp))
+            Text(
+                "베이스 (분수코드)",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(start = 24.dp, bottom = 6.dp),
+            )
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 24.dp),
+            ) {
+                item {
+                    FilterChip(
+                        selected = bass == null,
+                        onClick = { bass = null },
+                        label = { Text("없음") },
+                    )
+                }
+                items(ChordLibrary.ROOTS, key = { "bass:${it.letter}:${it.accidental}" }) { note ->
+                    FilterChip(
+                        selected = note == bass,
+                        onClick = { bass = if (bass == note) null else note },
+                        label = { Text("/${note.prettyName}") },
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
             HorizontalDivider()
             LazyColumn(Modifier.heightIn(max = 280.dp)) {
                 items(ChordQuality.byFamily(family), key = { it.id }) { quality ->
-                    val chord = Chord(root, quality)
+                    val chord = Chord(root, quality, bass)
                     val converted = transpose(chord)
                     Row(
                         modifier = Modifier
