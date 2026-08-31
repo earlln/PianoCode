@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.earlln.pianocode.music.Chord
 import com.earlln.pianocode.music.ChordConversion
+import com.earlln.pianocode.music.ChordStyle
 import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.music.Note
