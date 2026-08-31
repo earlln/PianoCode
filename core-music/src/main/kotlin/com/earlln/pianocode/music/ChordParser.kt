@@ -148,6 +148,16 @@ object ChordParser {
 
     private fun readQuality(suffix: String): ChordQuality? {
         if (suffix.isEmpty()) return ChordQuality.MAJOR
+        lookUp(suffix)?.let { return it }
+
+        // Engravers bracket a tension — G(add2), C(add9), A7(b9) — and a scan regularly
+        // loses one side of the pair, leaving `G(add2` with nothing in the table to match.
+        // The brackets carry no meaning the note names do not, so try again without them.
+        val bare = suffix.filterNot { it == '(' || it == ')' }
+        return if (bare != suffix && bare.isNotEmpty()) lookUp(bare) else null
+    }
+
+    private fun lookUp(suffix: String): ChordQuality? {
         suffixTable.firstOrNull { it.first == suffix }?.let { return it.second }
         val lowered = suffix.lowercase()
         if (lowered in caseSensitiveSpellings) return null

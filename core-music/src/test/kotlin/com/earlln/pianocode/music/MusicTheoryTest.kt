@@ -189,6 +189,25 @@ class ChordParserTest {
     }
 
     @Test
+    fun `reads a bracketed tension, whole or half eaten by the scanner`() {
+        // add2 and add9 are the same note named from different octaves.
+        assertEquals(ChordQuality.ADD_9, ChordParser.parse("G(add2)")!!.quality)
+        assertEquals(ChordQuality.ADD_9, ChordParser.parse("G(add9)")!!.quality)
+        // A scan of a bracket often keeps only one side of it.
+        assertEquals(ChordQuality.ADD_9, ChordParser.parse("G(add2")!!.quality)
+        assertEquals(ChordQuality.ADD_9, ChordParser.parse("Gadd2)")!!.quality)
+        assertEquals(ChordQuality.ADD_11, ChordParser.parse("C(add4)")!!.quality)
+        assertEquals(ChordQuality.MINOR_ADD_9, ChordParser.parse("Am(add9)")!!.quality)
+        assertEquals(Note(4, 0), ChordParser.parse("G(add2)")!!.root)
+    }
+
+    @Test
+    fun `brackets alone are not a chord`() {
+        assertNull(ChordParser.parse("G("))
+        assertNull(ChordParser.parse("G()"))
+    }
+
+    @Test
     fun `reads slash chords`() {
         val chord = ChordParser.parse("Am7/G")!!
         assertEquals(Note(5, 0), chord.root)
