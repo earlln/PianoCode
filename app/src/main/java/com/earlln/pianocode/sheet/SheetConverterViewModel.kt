@@ -8,7 +8,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.earlln.pianocode.music.Chord
 import com.earlln.pianocode.music.ChordConversion
-import com.earlln.pianocode.music.ChordParser
 import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.music.Note
@@ -23,69 +22,91 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * A chord the reader missed or misread, written in by hand.
- *
- * Recognition will never catch every symbol on every page, and a page converted all but
- * three ways is still a page in two keys. Rather than chase the last few by tightening
- * filters — which costs correct readings elsewhere — the remaining ones are placed by hand,
- * and they are painted exactly like the automatic ones.
- */
-data class ManualChord(
-    val id: String,
-    val bounds: Rect,
-    /** What the page says there, as the user read it off the sheet. */
-    val original: Chord,
-    /** Where that lands in the target key — this is what gets drawn. */
-    val converted: Chord,
-)
-
-/** A region the user has marked out, waiting for them to say what belongs there. */
-data class PendingEdit(
-    val bounds: Rect,
-    /** What the page appears to say there, when the reader saw something it could not use. */
-    val originalText: String? = null,
-    /** What the reader thinks the page says there, offered as a one-tap answer. */
-    val suggestion: Chord? = null,
-    /** Set when the user is correcting an entry they already placed. */
-    val replacingId: String? = null,
-)
-
 /** Where the converter is in its pick → read → convert → save flow. */
 enum class ConverterStage { EMPTY, ANALYZING, READY, RENDERING }
+
+/** Whether an entry came from reading the page or from the user placing it. */
+enum class EntryOrigin { RECOGNISED, MANUAL }
+
+/**
+ * One chord the app believes the page carries.
+ *
+ * Editing works on these rather than on the drawn output, which is what makes a correction
+ * stick: fix what the page is understood to say, press convert again, and the fix flows
+ * through the transposition like every other chord. Painting over the result instead would
+ * leave the app still believing the wrong thing underneath.
+ */
+data class SheetEntry(
+    val id: String,
+    val bounds: Rect,
+    /** What the sheet says here, as read or as corrected by hand. */
+    val original: Chord,
+    /** The text the reader actually saw, kept so a misreading can be recognised as one. */
+    val rawText: String,
+    val confidence: Float,
+    /** False for a reading the user rejected — notation mistaken for a chord. */
+    val enabled: Boolean = true,
+    val corrected: Boolean = false,
+    val origin: EntryOrigin = EntryOrigin.RECOGNISED,
+)
 
 data class SheetConverterState(
     val stage: ConverterStage = ConverterStage.EMPTY,
     val sourceBitmap: Bitmap? = null,
     val resultBitmap: Bitmap? = null,
-    val detected: List<DetectedChord> = emptyList(),
+    val entries: List<SheetEntry> = emptyList(),
     val missed: List<MissedCandidate> = emptyList(),
-    val disabledIds: Set<String> = emptySet(),
+    val selectedIds: Set<String> = emptySet(),
     val sourceKey: Key = Key(Note(0, 0), ScaleType.MAJOR),
     val targetKey: Key = Key(Note(4, 0), ScaleType.MAJOR),
     val mode: ConversionMode = ConversionMode.TRANSPOSE,
     val keyWasDetected: Boolean = false,
     val markConverted: Boolean = true,
     val markingColor: MarkingColor = MarkingColor.VIOLET,
-    val manualEdits: List<ManualChord> = emptyList(),
-    val pendingEdit: PendingEdit? = null,
-    val editMode: Boolean = false,
+    val editorOpen: Boolean = false,
+    /** A blank spot the user tapped, waiting for them to say what belongs there. */
+    val pendingSpot: Rect? = null,
     val message: String? = null,
 ) {
-    val enabled: List<DetectedChord> get() = detected.filterNot { it.id in disabledIds }
+    val enabledEntries: List<SheetEntry> get() = entries.filter { it.enabled }
 
-    /** The before/after pairs shown in the list, in reading order. */
-    val conversions: List<Pair<DetectedChord, ChordConversion>>
-        get() = detected.map { it to Transposer.convert(it.chord, sourceKey, targetKey, mode) }
-
-    val changedCount: Int
-        get() = conversions.count { (detected, conversion) ->
-            detected.id !in disabledIds && conversion.changed
+    /** Every chord and where it lands, recomputed from the entries on every change. */
+    val conversions: List<Pair<SheetEntry, ChordConversion>>
+        get() = entries.map {
+            it to Transposer.convert(it.original, sourceKey, targetKey, mode)
         }
 
-    /** True when two boxes cover mostly the same spot on the page. */
-    private fun overlaps(a: Rect, b: Rect): Boolean =
-        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    /** What the renderer paints: box and the symbol to write in it. */
+    val replacements: List<Pair<Rect, String>>
+        get() = conversions
+            .filter { (entry, _) -> entry.enabled }
+            .map { (entry, conversion) -> entry.bounds to conversion.converted.symbol }
+
+    val changedCount: Int
+        get() = conversions.count { (entry, conversion) -> entry.enabled && conversion.changed }
+
+    val correctedCount: Int get() = entries.count { it.corrected }
+
+    val manualCount: Int get() = entries.count { it.origin == EntryOrigin.MANUAL }
+
+    val rejectedCount: Int get() = entries.count { !it.enabled }
+
+    /**
+     * How much of the page will stay in the original key: text that reads like a chord but
+     * no entry covers, plus readings the user switched off.
+     */
+    val leftBehindCount: Int
+        get() = missed.count { candidate ->
+            entries.none { it.enabled && overlaps(it.bounds, candidate.bounds) }
+        } + rejectedCount
+
+    /** The size a chord occupies on this page, used to turn a tap into a box. */
+    val typicalChordBounds: Rect?
+        get() = entries.map { it.bounds }.takeIf { it.isNotEmpty() }?.let { boxes ->
+            val heights = boxes.map { it.height() }.sorted()
+            val widths = boxes.map { it.width() }.sorted()
+            Rect(0, 0, widths[widths.size / 2], heights[heights.size / 2])
+        }
 
     /** Semitones the transpose mode will move everything by, written the short way round. */
     val semitoneShift: Int get() = sourceKey.signedSemitonesTo(targetKey)
@@ -98,45 +119,19 @@ data class SheetConverterState(
             else -> "같은 높이"
         }
 
-    /**
-     * How many symbols will stay in the original key: ones the recogniser could not read,
-     * plus ones the user switched off. Any of these leaves the page in two keys at once,
-     * so the screen shows this count rather than letting it pass unnoticed.
-     */
-    val leftBehindCount: Int
-        get() = (missed.count { candidate -> manualEdits.none { overlaps(it.bounds, candidate.bounds) } } +
-            disabledIds.size).coerceAtLeast(0)
-
-    /** Everything that will be painted: the automatic conversions plus the hand-placed ones. */
-    val replacements: List<Pair<Rect, String>>
-        get() {
-            val manual = manualEdits.map { it.bounds to it.converted.symbol }
-            val automatic = conversions
-                .filter { (detected, _) -> detected.id !in disabledIds }
-                // A hand-placed chord wins over whatever the reader put in the same spot.
-                .filter { (detected, _) -> manualEdits.none { overlaps(it.bounds, detected.bounds) } }
-                .map { (detected, conversion) -> detected.bounds to conversion.converted.symbol }
-            return automatic + manual
-        }
-
-    /** The typical size of a chord on this page, used to size a tap into a box. */
-    val typicalChordBounds: Rect?
-        get() = detected.map { it.bounds }.takeIf { it.isNotEmpty() }?.let { boxes ->
-            val heights = boxes.map { it.height() }.sorted()
-            val widths = boxes.map { it.width() }.sorted()
-            Rect(0, 0, widths[widths.size / 2], heights[heights.size / 2])
-        }
-
     /** The line stamped across the top of the converted page. */
     val banner: String
         get() = "PianoCode · ${sourceKey.shortName} → ${targetKey.shortName} ($shiftText)" +
             (if (markConverted) " · ${markingColor.koreanName}이 바뀐 코드" else "") +
             " · 코드 심볼만 변경 (오선보 조표·음표는 원본 그대로)"
+
+    internal fun overlaps(a: Rect, b: Rect): Boolean =
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
 }
 
 /**
- * Drives the sheet converter: reads chords off a photo, rewrites them into the chosen
- * scale, and paints the result back onto the page.
+ * Drives the sheet converter: reads chords off a photo, lets the reading be corrected, and
+ * paints the transposed chords back onto the page.
  */
 class SheetConverterViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -150,11 +145,11 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 it.copy(
                     stage = ConverterStage.ANALYZING,
                     resultBitmap = null,
-                    detected = emptyList(),
+                    entries = emptyList(),
                     missed = emptyList(),
-                    disabledIds = emptySet(),
-                    manualEdits = emptyList(),
-                    pendingEdit = null,
+                    selectedIds = emptySet(),
+                    editorOpen = false,
+                    pendingSpot = null,
                     message = null,
                 )
             }
@@ -180,23 +175,30 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 return@launch
             }
 
-            val detected = scan.chords
-            val detectedKey = Transposer.detectKey(detected.map { it.chord })
-            // A page already written in violet would swallow the default marking, so the
-            // colour is chosen against this page's own ink rather than assumed.
-            val marking = withContext(Dispatchers.Default) {
-                SheetRenderer.pickMarkingColor(bitmap, detected.map { it.bounds })
+            val entries = scan.chords.map {
+                SheetEntry(
+                    id = it.id,
+                    bounds = it.bounds,
+                    original = it.chord,
+                    rawText = it.rawText,
+                    confidence = it.confidence,
+                )
             }
+            val detectedKey = Transposer.detectKey(entries.map { it.original })
+            val marking = withContext(Dispatchers.Default) {
+                SheetRenderer.pickMarkingColor(bitmap, entries.map { it.bounds })
+            }
+
             _state.update { current ->
                 current.copy(
                     stage = ConverterStage.READY,
                     sourceBitmap = bitmap,
-                    detected = detected,
+                    entries = entries,
                     missed = scan.missed,
                     sourceKey = detectedKey ?: current.sourceKey,
                     keyWasDetected = detectedKey != null,
                     markingColor = marking,
-                    message = if (detected.isEmpty()) {
+                    message = if (entries.isEmpty()) {
                         "코드를 찾지 못했습니다. 코드 심볼이 또렷하게 보이는 사진으로 다시 시도해 보세요."
                     } else {
                         null
@@ -206,16 +208,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
-    fun toggleChord(id: String) {
-        _state.update { current ->
-            val disabled = if (id in current.disabledIds) {
-                current.disabledIds - id
-            } else {
-                current.disabledIds + id
-            }
-            current.copy(disabledIds = disabled, resultBitmap = null)
-        }
-    }
+    // --- settings -----------------------------------------------------------
 
     fun setSourceKey(key: Key) =
         _state.update { it.copy(sourceKey = key, keyWasDetected = false, resultBitmap = null) }
@@ -224,46 +217,113 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
     fun setMode(mode: ConversionMode) = _state.update { it.copy(mode = mode, resultBitmap = null) }
 
-    /** Whether converted symbols are written in the highlight colour or the page's own ink. */
     fun setMarkConverted(mark: Boolean) =
         _state.update { it.copy(markConverted = mark, resultBitmap = null) }
 
-    /** Turns hand-editing on or off. */
-    fun setEditMode(on: Boolean) =
-        _state.update { it.copy(editMode = on, pendingEdit = null) }
+    fun setMarkingColor(color: MarkingColor) =
+        _state.update { it.copy(markingColor = color, resultBitmap = null) }
+
+    fun clearMessage() = _state.update { it.copy(message = null) }
+
+    fun showMessage(text: String) = _state.update { it.copy(message = text) }
+
+    // --- editing the reading ------------------------------------------------
+
+    fun openEditor() = _state.update { it.copy(editorOpen = true) }
+
+    fun closeEditor() =
+        _state.update { it.copy(editorOpen = false, selectedIds = emptySet(), pendingSpot = null) }
 
     /**
-     * Opens the picker for a region the user marked on the page.
+     * Handles a tap on the page.
      *
-     * When the reader saw text there but could not use it, that text is offered already
-     * transposed, so the common case — a symbol it simply missed — is one more tap.
+     * Landing on a chord selects it — several can be held at once, so a misreading repeated
+     * down the page is corrected in one go. Landing on bare paper offers to add a chord the
+     * reader never saw.
      */
-    fun beginEdit(spot: Rect) {
+    fun tapAt(spot: Rect) {
         val current = _state.value
-        // A tap arrives as a point. Grow it to the size a chord occupies on this page, which
-        // is what pointing at one symbol means.
-        val typical = current.typicalChordBounds
-        val bounds = if (spot.width() > 0 && spot.height() > 0) {
-            spot
-        } else {
-            val width = (typical?.width() ?: 90).coerceAtLeast(20)
-            val height = (typical?.height() ?: 40).coerceAtLeast(12)
-            Rect(
-                spot.left - width / 2,
-                spot.top - height / 2,
-                spot.left + width / 2,
-                spot.top + height / 2,
-            )
+        val hit = current.entries.firstOrNull { current.overlaps(it.bounds, spot) }
+        if (hit != null) {
+            _state.update {
+                it.copy(
+                    selectedIds = if (hit.id in it.selectedIds) {
+                        it.selectedIds - hit.id
+                    } else {
+                        it.selectedIds + hit.id
+                    },
+                )
+            }
+            return
         }
-        val nearby = current.missed.firstOrNull { overlapsRect(it.bounds, bounds) }
-        val parsed = nearby?.let { ChordParser.parse(it.text, requireUppercaseRoot = true) }
+        _state.update { it.copy(pendingSpot = grow(spot, current.typicalChordBounds)) }
+    }
+
+    fun clearSelection() = _state.update { it.copy(selectedIds = emptySet()) }
+
+    fun cancelPendingSpot() = _state.update { it.copy(pendingSpot = null) }
+
+    /** Drops the selected readings — notation the reader mistook for chords. */
+    fun deleteSelected() = _state.update { current ->
+        current.copy(
+            entries = current.entries.filterNot { it.id in current.selectedIds },
+            selectedIds = emptySet(),
+            resultBitmap = null,
+        )
+    }
+
+    /** Turns one reading on or off from the list on the settings screen. */
+    fun toggleEntry(id: String) = _state.update { current ->
+        current.copy(
+            entries = current.entries.map {
+                if (it.id == id) it.copy(enabled = !it.enabled) else it
+            },
+            resultBitmap = null,
+        )
+    }
+
+    fun enableAll() = _state.update { current ->
+        current.copy(entries = current.entries.map { it.copy(enabled = true) }, resultBitmap = null)
+    }
+
+    /**
+     * Sets what the page says at every selected spot, or at a spot tapped on bare paper.
+     *
+     * The conversion is not stored: only the corrected reading is. Pressing convert again
+     * runs the whole page through the transposition afresh, so a fix here reaches the output
+     * the same way a correct reading would have.
+     */
+    fun applyChord(original: Chord) {
+        val current = _state.value
+        val pending = current.pendingSpot
+        if (pending != null) {
+            val entry = SheetEntry(
+                id = "manual-${System.currentTimeMillis()}",
+                bounds = pending,
+                original = original,
+                rawText = original.symbol,
+                confidence = 1f,
+                corrected = true,
+                origin = EntryOrigin.MANUAL,
+            )
+            _state.update {
+                it.copy(entries = it.entries + entry, pendingSpot = null, resultBitmap = null)
+            }
+            return
+        }
+
+        if (current.selectedIds.isEmpty()) return
         _state.update {
             it.copy(
-                pendingEdit = PendingEdit(
-                    bounds = nearby?.bounds ?: bounds,
-                    originalText = nearby?.text,
-                    suggestion = parsed,
-                ),
+                entries = it.entries.map { entry ->
+                    if (entry.id in it.selectedIds) {
+                        entry.copy(original = original, corrected = true, enabled = true)
+                    } else {
+                        entry
+                    }
+                },
+                selectedIds = emptySet(),
+                resultBitmap = null,
             )
         }
     }
@@ -273,69 +333,26 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         Transposer.convert(chord, current.sourceKey, current.targetKey, current.mode).converted
     }
 
-    /** Reopens the picker for a chord already placed by hand. */
-    fun editExisting(id: String) {
-        val existing = _state.value.manualEdits.firstOrNull { it.id == id } ?: return
-        _state.update {
-            it.copy(
-                pendingEdit = PendingEdit(
-                    bounds = existing.bounds,
-                    suggestion = existing.original,
-                    replacingId = id,
-                ),
-            )
-        }
+    /** Grows a tap into the box a chord occupies on this page. */
+    private fun grow(spot: Rect, typical: Rect?): Rect {
+        if (spot.width() > 0 && spot.height() > 0) return spot
+        val width = (typical?.width() ?: 90).coerceAtLeast(20)
+        val height = (typical?.height() ?: 40).coerceAtLeast(12)
+        return Rect(
+            spot.left - width / 2,
+            spot.top - height / 2,
+            spot.left + width / 2,
+            spot.top + height / 2,
+        )
     }
 
-    fun cancelEdit() = _state.update { it.copy(pendingEdit = null) }
+    // --- output -------------------------------------------------------------
 
-    /**
-     * Places the chord the page already carries at the marked spot.
-     *
-     * [original] is what the user read off the sheet; the conversion is worked out here so
-     * they never have to do it themselves — which is the point of the app.
-     */
-    fun applyEdit(original: Chord) {
-        val pending = _state.value.pendingEdit ?: return
-        _state.update { current ->
-            val id = pending.replacingId ?: "manual-${System.currentTimeMillis()}"
-            val converted = Transposer.convert(
-                original, current.sourceKey, current.targetKey, current.mode,
-            ).converted
-            current.copy(
-                manualEdits = current.manualEdits.filterNot { it.id == id } +
-                    ManualChord(id, pending.bounds, original, converted),
-                pendingEdit = null,
-                resultBitmap = null,
-            )
-        }
-    }
-
-    fun removeEdit(id: String) = _state.update {
-        it.copy(manualEdits = it.manualEdits.filterNot { edit -> edit.id == id }, resultBitmap = null)
-    }
-
-    private fun overlapsRect(a: Rect, b: Rect): Boolean =
-        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
-
-    /** Overrides the colour chosen for this page. */
-    fun setMarkingColor(color: MarkingColor) =
-        _state.update { it.copy(markingColor = color, resultBitmap = null) }
-
-    fun clearMessage() = _state.update { it.copy(message = null) }
-
-    /** Surfaces a problem the UI hit before the view model was involved. */
-    fun showMessage(text: String) = _state.update { it.copy(message = text) }
-
-    /** Turns every recognised chord back on, after the user has switched some off. */
-    fun enableAll() = _state.update { it.copy(disabledIds = emptySet(), resultBitmap = null) }
-
-    /** Paints the converted symbols onto a copy of the page. */
     fun renderResult() {
         val current = _state.value
         val source = current.sourceBitmap ?: return
-        if (current.enabled.isEmpty()) {
-            _state.update { it.copy(message = "변환할 코드를 하나 이상 선택해 주세요.") }
+        if (current.enabledEntries.isEmpty()) {
+            _state.update { it.copy(message = "변환할 코드를 하나 이상 남겨 주세요.") }
             return
         }
 
@@ -352,9 +369,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     highlightInk = if (current.markConverted) current.markingColor.argb else null,
                 )
             }
-            _state.update {
-                it.copy(stage = ConverterStage.READY, resultBitmap = rendered)
-            }
+            _state.update { it.copy(stage = ConverterStage.READY, resultBitmap = rendered) }
         }
     }
 

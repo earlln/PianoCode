@@ -9,6 +9,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -127,8 +129,9 @@ fun SheetConverterScreen(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     var showResult by remember { mutableStateOf(true) }
-    // Converting every detected chord is cheap, but do it once per state change, not per row.
-    val conversions = remember(state.detected, state.sourceKey, state.targetKey, state.mode) {
+    var showPicker by remember { mutableStateOf(false) }
+    // Converting every reading is cheap, but do it once per state change, not per row.
+    val conversions = remember(state.entries, state.sourceKey, state.targetKey, state.mode) {
         state.conversions
     }
 
@@ -196,7 +199,7 @@ fun SheetConverterScreen(
     }
 
     val editorPage = state.resultBitmap ?: state.sourceBitmap
-    if (state.editMode && editorPage != null) {
+    if (state.editorOpen && editorPage != null) {
         SheetEditorDialog(
             bitmap = editorPage,
             bannerHeight = if (state.resultBitmap != null) {
@@ -205,20 +208,32 @@ fun SheetConverterScreen(
                 0
             },
             markingColor = state.markingColor.argb,
+            entries = state.entries,
             missed = state.missed,
-            manualEdits = state.manualEdits,
-            onPickSpot = viewModel::beginEdit,
-            onClose = { viewModel.setEditMode(false) },
+            selectedIds = state.selectedIds,
+            onTap = viewModel::tapAt,
+            onCorrect = { showPicker = true },
+            onDelete = viewModel::deleteSelected,
+            onClearSelection = viewModel::clearSelection,
+            onClose = viewModel::closeEditor,
         )
     }
 
-    state.pendingEdit?.let { pending ->
+    // Opened either by correcting a selection or by tapping bare paper.
+    if (showPicker || state.pendingSpot != null) {
+        val selected = state.entries.filter { it.id in state.selectedIds }
         ChordPickerSheet(
-            originalText = pending.originalText,
-            suggestion = pending.suggestion,
+            originalText = selected.firstOrNull()?.rawText,
+            suggestion = selected.firstOrNull()?.original,
             transpose = viewModel::transposeForPage,
-            onDismiss = viewModel::cancelEdit,
-            onPick = viewModel::applyEdit,
+            onDismiss = {
+                showPicker = false
+                viewModel.cancelPendingSpot()
+            },
+            onPick = {
+                showPicker = false
+                viewModel.applyChord(it)
+            },
         )
     }
 
@@ -335,18 +350,34 @@ fun SheetConverterScreen(
                         contentScale = ContentScale.FillWidth,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp)),
+                            .clip(RoundedCornerShape(12.dp))
+                            // Reaching to enlarge the page is exactly when someone wants a
+                            // closer look at a chord, so that gesture opens the editor
+                            // rather than asking them to find a button first.
+                            .pointerInput(state.entries.isNotEmpty()) {
+                                if (state.entries.isEmpty()) return@pointerInput
+                                detectTransformGestures { _, _, gestureZoom, _ ->
+                                    if (gestureZoom != 1f) viewModel.openEditor()
+                                }
+                            },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "두 손가락으로 벌리면 크게 보면서 코드를 고칠 수 있습니다.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
         }
 
-        if (state.detected.isNotEmpty()) {
+        if (state.entries.isNotEmpty()) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     SectionHeader(
                         title = "변환 설정",
-                        subtitle = "${state.detected.size}개의 코드를 찾았습니다",
+                        subtitle = "${state.entries.size}개의 코드를 찾았습니다" +
+                            (if (state.correctedCount > 0) " · ${state.correctedCount}개 직접 고침" else ""),
                     )
                 }
             }
@@ -484,7 +515,7 @@ fun SheetConverterScreen(
             item {
                 LeftBehindWarning(
                     missedCount = state.missed.size,
-                    disabledCount = state.disabledIds.size,
+                    disabledCount = state.rejectedCount,
                     missedSamples = state.missed.take(6).map { it.text },
                     sourceWidth = state.sourceBitmap?.width ?: 0,
                     onEnableAll = viewModel::enableAll,
@@ -501,10 +532,10 @@ fun SheetConverterScreen(
                 }
             }
 
-            items(conversions, key = { it.first.id }) { (detected, conversion) ->
-                val enabled = detected.id !in state.disabledIds
+            items(conversions, key = { it.first.id }) { (entry, conversion) ->
+                val enabled = entry.enabled
                 Card(
-                    onClick = { viewModel.toggleChord(detected.id) },
+                    onClick = { viewModel.toggleEntry(entry.id) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
@@ -524,7 +555,7 @@ fun SheetConverterScreen(
                         Column(Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    detected.chord.prettySymbol,
+                                    entry.original.prettySymbol,
                                     style = MaterialTheme.typography.titleMedium,
                                     textDecoration = if (enabled) {
                                         TextDecoration.LineThrough
@@ -551,11 +582,14 @@ fun SheetConverterScreen(
                             }
                             Text(
                                 buildString {
-                                    append("원문 \"${detected.rawText}\"")
+                                    append("원문 \"${entry.rawText}\"")
                                     if (!conversion.isDiatonicToSource) {
                                         append(" · 조성 밖의 코드")
                                     }
-                                    if (detected.confidence < 0.6f) {
+                                    if (entry.corrected) {
+                                        append(" · 직접 고침")
+                                    }
+                                    if (entry.confidence < 0.6f) {
                                         append(" · 인식 신뢰도 낮음")
                                     }
                                 },
@@ -565,7 +599,7 @@ fun SheetConverterScreen(
                         }
                         Switch(
                             checked = enabled,
-                            onCheckedChange = { viewModel.toggleChord(detected.id) },
+                            onCheckedChange = { viewModel.toggleEntry(entry.id) },
                         )
                     }
                 }
@@ -582,42 +616,32 @@ fun SheetConverterScreen(
                     shape = RoundedCornerShape(16.dp),
                 ) {
                     Column(Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "직접 고치기",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                Text(
-                                    "악보를 크게 열어, 못 바꾼 코드를 눌러 채웁니다. " +
-                                        "악보에 적힌 코드를 고르면 바뀐 코드가 자동으로 들어갑니다.",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            OutlinedButton(onClick = { viewModel.setEditMode(true) }) {
-                                Text("열기")
-                            }
+                        Text("직접 고치기", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "위 그림을 두 손가락으로 벌리면 크게 열립니다. 거기서 잘못 읽은 " +
+                                "코드를 눌러 고치거나 지우고, 빈 곳을 눌러 코드를 새로 넣을 수 " +
+                                "있습니다. 고친 뒤 다시 변환하면 전체가 새 내용으로 바뀝니다.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (state.correctedCount > 0 || state.rejectedCount > 0) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                buildString {
+                                    if (state.correctedCount > 0) {
+                                        append("직접 고친 코드 ${state.correctedCount}개")
+                                    }
+                                    if (state.rejectedCount > 0) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append("꺼 둔 코드 ${state.rejectedCount}개")
+                                    }
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Color(state.markingColor.argb),
+                            )
                         }
-
-                        state.manualEdits.forEach { edit ->
-                            HorizontalDivider(Modifier.padding(vertical = 10.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "${edit.original.prettySymbol} → ${edit.converted.prettySymbol}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = Color(state.markingColor.argb),
-                                    modifier = Modifier.weight(1f),
-                                )
-                                OutlinedButton(onClick = { viewModel.editExisting(edit.id) }) {
-                                    Text("바꾸기")
-                                }
-                                Spacer(Modifier.width(8.dp))
-                                OutlinedButton(onClick = { viewModel.removeEdit(edit.id) }) {
-                                    Text("지우기")
-                                }
-                            }
-                        }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = viewModel::openEditor) { Text("크게 열기") }
                     }
                 }
             }
@@ -639,14 +663,7 @@ fun SheetConverterScreen(
                         } else {
                             Icon(Icons.Filled.AutoFixHigh, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text(
-                                if (state.manualEdits.isEmpty()) {
-                                    "악보에 ${state.changedCount}개 코드 바꿔 그리기"
-                                } else {
-                                    "악보에 ${state.changedCount}개 + 직접 고친 " +
-                                        "${state.manualEdits.size}개 그리기"
-                                },
-                            )
+                            Text("악보에 ${state.changedCount}개 코드 바꿔 그리기")
                         }
                     }
 

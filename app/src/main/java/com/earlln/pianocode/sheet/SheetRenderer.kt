@@ -31,8 +31,8 @@ object SheetRenderer {
     /** Room above a glyph-hugging box so the redrawn symbol matches the printed one. */
     private const val TEXT_HEADROOM = 1.18f
 
-    /** How far above the page's median a symbol may be drawn, whatever its box says. */
-    private const val MAX_HEIGHT_RATIO = 1.6f
+    /** How far a symbol may shrink to clear its neighbour before it is allowed to run wide. */
+    private const val MIN_SHRINK = 0.8f
 
     /** Default marking colour, used until a page has been looked at. */
     val CONVERTED_INK: Int get() = MarkingColor.VIOLET.argb
@@ -103,13 +103,15 @@ object SheetRenderer {
             .filter { it.bounds.width() > 0 && it.bounds.height() > 0 }
             .sortedBy { it.bounds.left }
 
-        // Chord symbols are all one size on a page, so the median describes them. Capping
-        // against it keeps a single bad box from stamping a huge letter over the music,
-        // however it got through.
-        val sizeCap = sorted.map { it.bounds.height() }.sorted()
+        // A printed page sets every chord in one size, so the redrawn ones use one size
+        // too, taken from the median of the boxes they replace. Sizing each symbol to its
+        // own box made the page a jumble of large and small letters, because the boxes hug
+        // whatever glyphs they happened to contain.
+        val medianHeight = sorted.map { it.bounds.height() }.sorted()
             .takeIf { it.isNotEmpty() }
-            ?.let { it[it.size / 2].toFloat() * MAX_HEIGHT_RATIO * TEXT_HEADROOM }
-            ?: Float.MAX_VALUE
+            ?.let { it[it.size / 2].toFloat() }
+            ?: 0f
+        val uniformSize = (medianHeight * TEXT_HEADROOM).coerceAtLeast(8f)
 
         // Colours are sampled from the untouched source, and every box is covered before
         // any text is drawn. Doing it in one pass let a later chord's cover rectangle clip
@@ -159,8 +161,7 @@ object SheetRenderer {
                 paint = textPaint,
                 text = plan.replacement.replacement,
                 maxWidth = available,
-                boxHeight = bounds.height().toFloat(),
-                sizeCap = sizeCap,
+                uniformSize = uniformSize,
             )
 
             val metrics = textPaint.fontMetrics
@@ -213,22 +214,23 @@ object SheetRenderer {
         canvas.drawText(text, padding, baseline, paint)
     }
 
-    /** Largest text size that fits [maxWidth] while staying near the original cap height. */
+    /**
+     * The page's one text size, given up only as far as it takes to clear the next chord.
+     *
+     * Letting a long symbol shrink without limit would reintroduce the jumble the uniform
+     * size removes, so it never falls below [MIN_SHRINK] of it; a symbol that still does not
+     * fit runs a little wide instead, which reads better than a tiny one.
+     */
     private fun fittingTextSize(
         paint: Paint,
         text: String,
         maxWidth: Float,
-        boxHeight: Float,
-        sizeCap: Float,
+        uniformSize: Float,
     ): Float {
-        // The recogniser's box hugs the glyphs, so the drawn size needs a little headroom.
-        var size = (boxHeight * TEXT_HEADROOM).coerceAtMost(sizeCap)
-        paint.textSize = size
+        paint.textSize = uniformSize
         val width = paint.measureText(text)
-        if (width > maxWidth && width > 0f) {
-            size *= maxWidth / width
-        }
-        return size.coerceAtLeast(8f)
+        if (width <= maxWidth || width <= 0f) return uniformSize
+        return (uniformSize * maxWidth / width).coerceAtLeast(uniformSize * MIN_SHRINK)
     }
 
     /**

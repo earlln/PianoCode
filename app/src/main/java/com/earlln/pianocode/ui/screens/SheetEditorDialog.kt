@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -44,8 +45,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.earlln.pianocode.sheet.ManualChord
 import com.earlln.pianocode.sheet.MissedCandidate
+import com.earlln.pianocode.sheet.SheetEntry
 
 /**
  * Full-screen editor for placing chords the conversion did not reach.
@@ -55,17 +56,23 @@ import com.earlln.pianocode.sheet.MissedCandidate
  * settings list, every drag over it was taken by the list instead. Here the page fills the
  * screen, pinch and drag move it, and a tap means one thing only: put a chord there.
  *
- * The spots the reader saw but could not use are outlined, so the work is a matter of
- * tapping what is already marked rather than hunting for it.
+ * Every chord the app believes it found is outlined, so the page shows what it understood.
+ * Tapping one selects it — several at once, since the same misreading usually repeats down
+ * a page — and the bar underneath either corrects them all or throws them away. Tapping bare
+ * paper adds a chord the reader never saw.
  */
 @Composable
 fun SheetEditorDialog(
     bitmap: Bitmap,
     bannerHeight: Int,
     markingColor: Int,
+    entries: List<SheetEntry>,
     missed: List<MissedCandidate>,
-    manualEdits: List<ManualChord>,
-    onPickSpot: (Rect) -> Unit,
+    selectedIds: Set<String>,
+    onTap: (Rect) -> Unit,
+    onCorrect: () -> Unit,
+    onDelete: () -> Unit,
+    onClearSelection: () -> Unit,
     onClose: () -> Unit,
 ) {
     val image = remember(bitmap) { bitmap.asImageBitmap() }
@@ -114,7 +121,7 @@ fun SheetEditorDialog(
                 Column(Modifier.weight(1f)) {
                     Text("직접 고치기", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "두 손가락으로 확대하고, 고칠 코드를 한 번 누르세요.",
+                        "코드를 눌러 고르고, 빈 곳을 누르면 코드를 새로 넣습니다.",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -146,14 +153,10 @@ fun SheetEditorDialog(
                         .pointerInput(bitmap, bannerHeight) {
                             detectTapGestures { tap ->
                                 val page = toPage(tap)
-                                val y = page.y.toInt() - bannerHeight
                                 val x = page.x.toInt()
-                                val marked = missed.firstOrNull {
-                                    it.bounds.contains(x, y)
-                                }
-                                onPickSpot(
-                                    marked?.bounds ?: Rect(x, y, x, y),
-                                )
+                                val y = page.y.toInt() - bannerHeight
+                                val marked = missed.firstOrNull { it.bounds.contains(x, y) }
+                                onTap(marked?.bounds ?: Rect(x, y, x, y))
                             }
                         },
                 ) {
@@ -167,50 +170,88 @@ fun SheetEditorDialog(
                         ),
                     )
 
-                    fun outline(rect: Rect, color: Color, width: Float) {
+                    fun box(rect: Rect, color: Color, width: Float, fill: Boolean = false) {
+                        val topLeft = Offset(
+                            pan.x + rect.left * drawScale,
+                            pan.y + (rect.top + bannerHeight) * drawScale,
+                        )
+                        val boxSize = Size(rect.width() * drawScale, rect.height() * drawScale)
+                        if (fill) {
+                            drawRect(color = color.copy(alpha = 0.28f), topLeft = topLeft, size = boxSize)
+                        }
                         drawRect(
                             color = color,
-                            topLeft = Offset(
-                                pan.x + rect.left * drawScale,
-                                pan.y + (rect.top + bannerHeight) * drawScale,
-                            ),
-                            size = Size(rect.width() * drawScale, rect.height() * drawScale),
+                            topLeft = topLeft,
+                            size = boxSize,
                             style = Stroke(width = width),
                         )
                     }
 
-                    // What the reader saw but could not use — the places worth tapping.
-                    missed.forEach { outline(it.bounds, Color(0xFFFF7597), 2.dp.toPx()) }
-                    // What has already been placed by hand.
-                    manualEdits.forEach { outline(it.bounds, Color(markingColor), 3.dp.toPx()) }
+                    // Text that reads like a chord but no entry covers — worth a look.
+                    missed.filter { candidate ->
+                        entries.none { entry ->
+                            entry.bounds.left < candidate.bounds.right &&
+                                candidate.bounds.left < entry.bounds.right &&
+                                entry.bounds.top < candidate.bounds.bottom &&
+                                candidate.bounds.top < entry.bounds.bottom
+                        }
+                    }.forEach { box(it.bounds, Color(0xFFFF7597), 2.dp.toPx()) }
+
+                    entries.forEach { entry ->
+                        val selected = entry.id in selectedIds
+                        val colour = when {
+                            selected -> Color(0xFF2196F3)
+                            !entry.enabled -> Color(0xFF9E9E9E)
+                            else -> Color(markingColor)
+                        }
+                        box(
+                            entry.bounds,
+                            colour,
+                            if (selected) 4.dp.toPx() else 2.dp.toPx(),
+                            fill = selected,
+                        )
+                    }
                 }
             }
 
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedButton(onClick = { zoom = (zoom / 1.6f).coerceAtLeast(1f) }) {
-                    Icon(Icons.Filled.Remove, contentDescription = "축소")
-                }
-                OutlinedButton(onClick = { zoom = (zoom * 1.6f).coerceAtMost(10f) }) {
-                    Icon(Icons.Filled.Add, contentDescription = "확대")
-                }
-                Spacer(Modifier.width(4.dp))
-                Column {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(onClick = { zoom = (zoom / 1.6f).coerceAtLeast(1f) }) {
+                        Icon(Icons.Filled.Remove, contentDescription = "축소")
+                    }
+                    OutlinedButton(onClick = { zoom = (zoom * 1.6f).coerceAtMost(10f) }) {
+                        Icon(Icons.Filled.Add, contentDescription = "확대")
+                    }
+                    Spacer(Modifier.width(4.dp))
                     Text(
-                        "${(zoom * 100).toInt()}%  ·  직접 고친 코드 ${manualEdits.size}개",
+                        "${(zoom * 100).toInt()}%  ·  코드 ${entries.size}개",
                         style = MaterialTheme.typography.labelLarge,
                     )
-                    if (missed.isNotEmpty()) {
-                        Text(
-                            "분홍 테두리 ${missed.size}곳은 읽었지만 바꾸지 못한 자리입니다.",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                if (selectedIds.isEmpty()) {
+                    Text(
+                        "잘못 인식한 코드를 눌러 고르세요. 여러 개를 한 번에 고를 수 있습니다.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "${selectedIds.size}개 선택됨",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = onCorrect, modifier = Modifier.weight(1f)) {
+                            Text("코드 고치기")
+                        }
+                        OutlinedButton(onClick = onDelete) { Text("지우기") }
+                        OutlinedButton(onClick = onClearSelection) { Text("해제") }
                     }
                 }
             }
