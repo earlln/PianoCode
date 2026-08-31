@@ -2,7 +2,6 @@ package com.earlln.pianocode.ui.screens
 
 import android.content.ActivityNotFoundException
 import android.content.Context
-import android.graphics.Bitmap
 import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
@@ -134,7 +133,7 @@ fun SheetConverterScreen(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     var showResult by remember { mutableStateOf(true) }
-    var viewerPage by remember { mutableStateOf<Bitmap?>(null) }
+    var showViewer by remember { mutableStateOf(false) }
     // Converting every reading is cheap, but do it once per state change, not per row.
     val conversions = remember(state.entries, state.sourceKey, state.targetKey, state.mode) {
         state.conversions
@@ -203,12 +202,15 @@ fun SheetConverterScreen(
         if (state.resultBitmap != null) showResult = true
     }
 
-    viewerPage?.let { page ->
-        SheetViewerDialog(
-            bitmap = page,
-            title = if (page === state.resultBitmap) "변환된 악보" else "원본 악보",
-            onClose = { viewerPage = null },
-        )
+    state.sourceBitmap?.let { source ->
+        if (showViewer) {
+            SheetViewerDialog(
+                original = source,
+                converted = state.resultBitmap,
+                startWithConverted = showResult && state.resultBitmap != null,
+                onClose = { showViewer = false },
+            )
+        }
     }
 
     // The editor works on the sheet as printed. Correcting asks what the page carries, so
@@ -369,7 +371,7 @@ fun SheetConverterScreen(
                             // the list underneath could not be scrolled by dragging the one
                             // thing filling the screen. A tap detector leaves a drag alone.
                             .pointerInput(preview) {
-                                detectTapGestures(onDoubleTap = { viewerPage = preview })
+                                detectTapGestures(onDoubleTap = { showViewer = true })
                             },
                     )
 
@@ -380,13 +382,18 @@ fun SheetConverterScreen(
                             context = context,
                             onConvert = viewModel::renderResult,
                             onEdit = viewModel::openEditor,
-                            onView = { viewerPage = preview },
+                            onView = { showViewer = true },
                             onSave = { viewModel.saveResult {} },
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "그림을 두 번 두드리면 크게 볼 수 있습니다. " +
-                                "아래에서 조성과 세부 설정을 바꿀 수 있습니다.",
+                            if (state.resultBitmap != null) {
+                                "그림을 두 번 두드려도 열립니다. 확대한 자리 그대로 " +
+                                    "원본과 변환본을 번갈아 볼 수 있습니다."
+                            } else {
+                                "그림을 두 번 두드리면 크게 볼 수 있습니다. " +
+                                    "아래에서 조성과 세부 설정을 바꿀 수 있습니다."
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -712,7 +719,7 @@ private fun SheetActions(
             OutlinedButton(onClick = onView, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Filled.ZoomIn, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("크게 보기")
+                Text(if (state.resultBitmap != null) "원본과 비교" else "크게 보기")
             }
             OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Filled.Edit, contentDescription = null)

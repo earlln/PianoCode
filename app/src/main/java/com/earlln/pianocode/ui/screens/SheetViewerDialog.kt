@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -49,32 +50,55 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 /**
- * Reading the page close up, with nothing to press on it.
+ * Reading the page close up, and holding it against the original.
  *
  * A sheet fitted to a phone's width is unreadable — that is the whole reason the editor
  * zooms — but wanting to read a bar of music is not wanting to correct it. This is the
  * same pinch, drag and double tap without the outlines, the selection or the risk of
  * changing something by touching the wrong place.
+ *
+ * Switching between the two pages keeps the zoom and the position, which is what makes it
+ * a comparison: the same bar, in the same place on the screen, one chord row against the
+ * other. Two views side by side would halve a page that is already too small to read.
  */
 @Composable
 fun SheetViewerDialog(
-    bitmap: Bitmap,
-    title: String,
+    original: Bitmap,
+    converted: Bitmap?,
+    startWithConverted: Boolean,
     onClose: () -> Unit,
 ) {
-    val image = remember(bitmap) { bitmap.asImageBitmap() }
+    val originalImage = remember(original) { original.asImageBitmap() }
+    val convertedImage = remember(converted) { converted?.asImageBitmap() }
+    var showConverted by remember(converted) {
+        mutableStateOf(startWithConverted && converted != null)
+    }
+    val bitmap = if (showConverted && converted != null) converted else original
+    val image = if (showConverted && convertedImage != null) convertedImage else originalImage
+
+    // The converted page carries a banner above the sheet, so it is taller. Lifting it by
+    // that much puts the two pages' staves in the same place, which is the whole point.
+    val bannerOffset =
+        if (showConverted && converted != null) {
+            (converted.height - original.height).coerceAtLeast(0)
+        } else {
+            0
+        }
+
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(Size.Zero) }
 
     fun baseScale(): Float =
-        if (viewport.width <= 0f) 1f else viewport.width / bitmap.width
+        if (viewport.width <= 0f) 1f else viewport.width / original.width
 
     fun scale(): Float = baseScale() * zoom
 
     fun clampPan(candidate: Offset): Offset {
-        val drawnWidth = bitmap.width * scale()
-        val drawnHeight = bitmap.height * scale()
+        // Clamped against the original throughout, so the reachable area does not shift
+        // when the page is switched.
+        val drawnWidth = original.width * scale()
+        val drawnHeight = original.height * scale()
         val minX = minOf(0f, viewport.width - drawnWidth)
         val minY = minOf(0f, viewport.height - drawnHeight)
         val maxX = maxOf(0f, viewport.width - drawnWidth)
@@ -106,7 +130,7 @@ fun SheetViewerDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    title,
+                    if (converted == null) "악보 크게 보기" else "원본과 비교",
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )
@@ -114,6 +138,30 @@ fun SheetViewerDialog(
                     Icon(Icons.Filled.Close, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("닫기")
+                }
+            }
+
+            if (converted != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = !showConverted,
+                        onClick = { showConverted = false },
+                        label = { Text("원본") },
+                    )
+                    FilterChip(
+                        selected = showConverted,
+                        onClick = { showConverted = true },
+                        label = { Text("변환본") },
+                    )
+                    Text(
+                        "확대한 자리 그대로 번갈아 봅니다",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
@@ -147,7 +195,10 @@ fun SheetViewerDialog(
                     val drawScale = scale()
                     drawImage(
                         image = image,
-                        dstOffset = IntOffset(pan.x.toInt(), pan.y.toInt()),
+                        dstOffset = IntOffset(
+                            pan.x.toInt(),
+                            (pan.y - bannerOffset * drawScale).toInt(),
+                        ),
                         dstSize = IntSize(
                             (bitmap.width * drawScale).toInt(),
                             (bitmap.height * drawScale).toInt(),
@@ -168,7 +219,8 @@ fun SheetViewerDialog(
                         shadowElevation = 4.dp,
                     ) {
                         Text(
-                            "${(zoom * 100).toInt()}%",
+                            "${(zoom * 100).toInt()}% · " +
+                                if (showConverted) "변환본" else "원본",
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                         )
