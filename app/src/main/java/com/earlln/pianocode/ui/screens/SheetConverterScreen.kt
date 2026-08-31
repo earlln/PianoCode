@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -365,21 +364,23 @@ fun SheetConverterScreen(
                             },
                     )
 
+                    Spacer(Modifier.height(8.dp))
+                    // No button for this: the gesture is the way in, so the screen says
+                    // what the gesture is instead of offering a shortcut beside it.
+                    Text(
+                        "두 손가락으로 벌리거나 두 번 두드리면 크게 열립니다 · " +
+                            "거기서 코드를 꾹 누르면 바로 고칩니다",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
                     if (state.entries.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
                         SheetActions(
                             state = state,
                             context = context,
                             onConvert = viewModel::renderResult,
-                            onEdit = viewModel::openEditor,
                             onSave = { viewModel.saveResult {} },
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "그림을 두 손가락으로 벌리거나 두 번 두드리면 크게 열립니다. " +
-                                "거기서 코드를 꾹 누르면 바로 고칠 수 있습니다.",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -634,10 +635,10 @@ fun SheetConverterScreen(
                         Text("직접 고치기", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "그림 아래 `직접 고치기`를 누르거나 그림을 두 번 두드리면 크게 " +
-                                "열립니다. 거기서 잘못 읽은 코드를 눌러 고치거나 지우고, 빈 곳을 " +
-                                "눌러 코드를 새로 넣을 수 있습니다. 고친 뒤 다시 변환하면 전체가 " +
-                                "새 내용으로 바뀝니다.",
+                            "위 그림을 두 손가락으로 벌리거나 두 번 두드리면 크게 열립니다. " +
+                                "거기서 코드를 꾹 누르면 바로 고치고, 빈 곳을 꾹 누르면 코드를 " +
+                                "새로 넣습니다. 짧게 누르면 여러 개를 골라 한꺼번에 지우거나 " +
+                                "고칠 수 있습니다. 고친 뒤 다시 변환하면 전체가 새 내용으로 바뀝니다.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         if (state.correctedCount > 0 || state.rejectedCount > 0) {
@@ -677,7 +678,6 @@ private fun SheetActions(
     state: SheetConverterState,
     context: Context,
     onConvert: () -> Unit,
-    onEdit: () -> Unit,
     onSave: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -695,13 +695,6 @@ private fun SheetActions(
                 Spacer(Modifier.width(8.dp))
                 Text("악보에 ${state.changedCount}개 코드 바꿔 그리기")
             }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.ZoomIn, contentDescription = null)
-            Spacer(Modifier.width(6.dp))
-            Text(if (state.resultBitmap != null) "크게 보기 · 원본 비교 · 고치기" else "크게 보기 · 고치기")
         }
 
         if (state.resultBitmap != null) {
