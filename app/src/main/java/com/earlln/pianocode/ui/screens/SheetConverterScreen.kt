@@ -515,16 +515,6 @@ fun SheetConverterScreen(
                 }
             }
 
-            if (state.restoredCount > 0) {
-                item {
-                    RestoredNotice(
-                        count = state.restoredCount,
-                        onForget = viewModel::forgetSheet,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-            }
-
             item {
                 LeftBehindWarning(
                     missedCount = state.openMissed.size,
@@ -920,30 +910,6 @@ private fun HowToCard(modifier: Modifier = Modifier) {
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
             }
-        }
-    }
-}
-
-/** Says that this page came back with earlier corrections, and offers to drop them. */
-@Composable
-private fun RestoredNotice(count: Int, onForget: () -> Unit, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-        ),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text("전에 고친 내용을 불러왔습니다", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "이 악보에서 직접 고치거나 지운 ${count}곳을 그대로 되살렸습니다. " +
-                    "처음 읽은 상태로 되돌리려면 저장한 내용을 지우고 다시 읽으면 됩니다.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(onClick = onForget) { Text("기억 지우고 다시 읽기") }
         }
     }
 }
