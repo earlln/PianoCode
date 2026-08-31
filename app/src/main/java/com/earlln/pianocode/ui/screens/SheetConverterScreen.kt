@@ -76,7 +76,6 @@ import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.sheet.ConverterStage
 import com.earlln.pianocode.sheet.MarkingColor
 import com.earlln.pianocode.sheet.SheetConverterViewModel
-import com.earlln.pianocode.sheet.SheetRenderer
 import com.earlln.pianocode.ui.components.SectionHeader
 import com.earlln.pianocode.util.ImageIo
 
@@ -198,15 +197,13 @@ fun SheetConverterScreen(
         if (state.resultBitmap != null) showResult = true
     }
 
-    val editorPage = state.resultBitmap ?: state.sourceBitmap
+    // The editor works on the sheet as printed. Correcting asks what the page carries, so
+    // the page shown has to be the one carrying it — and an edit clears the rendered result,
+    // which would otherwise swap the image out from under the finger mid-edit.
+    val editorPage = state.sourceBitmap
     if (state.editorOpen && editorPage != null) {
         SheetEditorDialog(
             bitmap = editorPage,
-            bannerHeight = if (state.resultBitmap != null) {
-                state.sourceBitmap?.let { SheetRenderer.bannerHeightFor(it) } ?: 0
-            } else {
-                0
-            },
             markingColor = state.markingColor.argb,
             entries = state.entries,
             missed = state.openMissed,

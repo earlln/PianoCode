@@ -184,8 +184,8 @@ object SheetRenderer {
         val ink: Int,
     )
 
-    /** Height of the band drawn above the page, needed to map a tap back onto the source. */
-    fun bannerHeightFor(source: Bitmap): Int =
+    /** Height of the band drawn above the page. */
+    private fun bannerHeightFor(source: Bitmap): Int =
         (source.width * 0.045f).roundToInt().coerceIn(30, 96)
 
     /**
