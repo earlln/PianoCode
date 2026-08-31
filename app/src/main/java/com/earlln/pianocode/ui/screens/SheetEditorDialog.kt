@@ -9,12 +9,14 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
@@ -47,6 +50,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -55,22 +59,21 @@ import androidx.compose.ui.window.DialogProperties
 import com.earlln.pianocode.sheet.MissedCandidate
 import com.earlln.pianocode.sheet.SheetEntry
 import com.earlln.pianocode.sheet.key
+import kotlin.math.roundToInt
 
 /**
  * Full-screen editor for correcting what the app believes the page says.
  *
  * It has to be its own screen. On a page scaled to a phone's width a chord symbol is a few
  * millimetres across — too small to aim at — and while the preview sat inside the scrolling
- * settings list, every drag over it was taken by the list instead. Here the page fills the
- * screen, pinch and drag move it, and a tap selects.
+ * settings list, every drag over it was taken by the list instead.
  *
- * It shows the sheet as printed, never the converted output. Correcting asks what the page
- * actually carries, so the page in front of the reader has to be the one carrying it — and
- * an edit that discards the rendered result would otherwise swap the image mid-edit.
+ * It shows the sheet as printed, never the converted output: correcting asks what the page
+ * already carries, so the page in front of the reader has to be the one carrying it.
  *
- * The actions sit directly under the header rather than at the foot of the screen: a
- * selection is made by tapping the page, and the answer to "now what" should not be at the
- * far end of a phone from the page it applies to.
+ * What can be done with a selection follows the selection around the page. Zoomed in to
+ * reach a symbol a few millimetres wide, a control bar pinned to the edge of the screen is
+ * a round trip — zoom out, reach, zoom back — for every single correction.
  */
 @Composable
 fun SheetEditorDialog(
@@ -80,18 +83,22 @@ fun SheetEditorDialog(
     missed: List<MissedCandidate>,
     selectedIds: Set<String>,
     selectedMissed: String?,
+    changedCount: Int,
     onTap: (Rect) -> Unit,
     onCorrect: () -> Unit,
     onDelete: () -> Unit,
     onAdoptMissed: () -> Unit,
     onDismissMissed: () -> Unit,
     onClearSelection: () -> Unit,
+    onApply: () -> Unit,
     onClose: () -> Unit,
 ) {
     val image = remember(bitmap) { bitmap.asImageBitmap() }
+    val density = LocalDensity.current
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(Size.Zero) }
+    var actionsSize by remember { mutableStateOf(IntSize.Zero) }
 
     // The page is laid out to the screen's width at zoom 1, so one number scales both axes
     // and the mapping back to page coordinates stays a division.
@@ -116,10 +123,27 @@ fun SheetEditorDialog(
         )
     }
 
+    /** The area the selection covers on the page, or null when nothing is selected. */
+    val focus: Rect? = when {
+        selectedMissed != null -> missed.firstOrNull { it.key == selectedMissed }?.bounds
+        selectedIds.isNotEmpty() -> entries
+            .filter { it.id in selectedIds }
+            .map { it.bounds }
+            .reduceOrNull { a, b ->
+                Rect(
+                    minOf(a.left, b.left),
+                    minOf(a.top, b.top),
+                    maxOf(a.right, b.right),
+                    maxOf(a.bottom, b.bottom),
+                )
+            }
+
+        else -> null
+    }
+
     Dialog(
         onDismissRequest = onClose,
-        // The activity draws edge to edge; a dialog that fits system windows would be inset
-        // by the framework and then again by the padding below, so it takes the insets itself.
+        // The activity draws edge to edge; the padding below takes the insets itself.
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             decorFitsSystemWindows = false,
@@ -135,7 +159,7 @@ fun SheetEditorDialog(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 4.dp),
+                    .padding(start = 16.dp, end = 8.dp, top = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -146,21 +170,59 @@ fun SheetEditorDialog(
                 TextButton(onClick = onClose) {
                     Icon(Icons.Filled.Close, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("닫기")
+                    Text("그냥 닫기")
                 }
             }
 
-            ActionBar(
-                markingColor = markingColor,
-                missedCount = missed.size,
-                selectedCount = selectedIds.size,
-                missedSelected = selectedMissed != null,
-                onCorrect = onCorrect,
-                onDelete = onDelete,
-                onAdoptMissed = onAdoptMissed,
-                onDismissMissed = onDismissMissed,
-                onClearSelection = onClearSelection,
-            )
+            // Closing is not applying, so say what applying is and put it in reach. Every
+            // edit invalidates the drawn page, and without this the way back to a converted
+            // sheet is to close, find the screen again and press convert there.
+            Button(
+                onClick = onApply,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Icon(Icons.Filled.AutoFixHigh, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("고친 대로 악보에 ${changedCount}개 바꿔 그리기")
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    if (focus != null) {
+                        Text(
+                            if (selectedMissed != null) {
+                                "분홍색 표시 1곳 선택됨 — 그림 위 버튼으로 처리하세요."
+                            } else {
+                                "${selectedIds.size}개 선택됨 — 그림 위 버튼으로 처리하세요."
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    } else {
+                        Text(
+                            "고칠 자리를 누르세요. 코드는 여러 개를 한 번에 고를 수 있습니다.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(5.dp))
+                        LegendRow(Color(markingColor), "앱이 찾은 코드 — 고치거나 지웁니다")
+                        if (missed.isNotEmpty()) {
+                            Spacer(Modifier.height(3.dp))
+                            LegendRow(
+                                Color(0xFFFF7597),
+                                "넣지 않은 자리 ${missed.size}곳 — 넣거나 없앱니다",
+                            )
+                        }
+                    }
+                }
+            }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
@@ -182,9 +244,7 @@ fun SheetEditorDialog(
                         .pointerInput(bitmap) {
                             detectTapGestures { tap ->
                                 val page = toPage(tap)
-                                val x = page.x.toInt()
-                                val y = page.y.toInt()
-                                onTap(Rect(x, y, x, y))
+                                onTap(Rect(page.x.toInt(), page.y.toInt(), page.x.toInt(), page.y.toInt()))
                             }
                         },
                 ) {
@@ -245,97 +305,94 @@ fun SheetEditorDialog(
                         )
                     }
                 }
-            }
 
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedButton(onClick = { zoom = (zoom / 1.6f).coerceAtLeast(1f) }) {
-                    Icon(Icons.Filled.Remove, contentDescription = "축소")
-                }
-                OutlinedButton(onClick = { zoom = (zoom * 1.6f).coerceAtMost(10f) }) {
-                    Icon(Icons.Filled.Add, contentDescription = "확대")
-                }
-                Text(
-                    "${(zoom * 100).toInt()}%  ·  코드 ${entries.size}개",
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
-        }
-    }
-}
+                if (focus != null) {
+                    val gap = with(density) { 10.dp.toPx() }
+                    val drawScale = scale()
+                    val centreX = pan.x + (focus.left + focus.right) / 2f * drawScale
+                    val under = pan.y + focus.bottom * drawScale + gap
+                    val over = pan.y + focus.top * drawScale - actionsSize.height - gap
+                    // Under the selection unless that falls off the screen, then over it,
+                    // and failing both simply somewhere visible.
+                    val y = when {
+                        under + actionsSize.height <= viewport.height -> under
+                        over >= 0f -> over
+                        else -> (viewport.height - actionsSize.height).coerceAtLeast(0f)
+                    }
+                    val x = (centreX - actionsSize.width / 2f)
+                        .coerceIn(0f, (viewport.width - actionsSize.width).coerceAtLeast(0f))
 
-/**
- * What can be done with the current selection, kept at the top of the screen.
- *
- * It holds its place whether or not anything is selected, so the page below never jumps
- * when a tap lands.
- */
-@Composable
-private fun ActionBar(
-    markingColor: Int,
-    missedCount: Int,
-    selectedCount: Int,
-    missedSelected: Boolean,
-    onCorrect: () -> Unit,
-    onDelete: () -> Unit,
-    onAdoptMissed: () -> Unit,
-    onDismissMissed: () -> Unit,
-    onClearSelection: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            when {
-                missedSelected -> {
-                    Text(
-                        "분홍색 표시 1곳 — 아직 코드로 넣지 않은 자리입니다.",
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onAdoptMissed, modifier = Modifier.weight(1f)) {
-                            Text("코드로 넣기")
+                    Surface(
+                        modifier = Modifier
+                            .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                            .onSizeChanged { actionsSize = it },
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.inverseSurface,
+                        shadowElevation = 8.dp,
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            val labels = if (selectedMissed != null) {
+                                listOf("코드로 넣기" to onAdoptMissed, "코드 아님" to onDismissMissed)
+                            } else {
+                                listOf("고치기" to onCorrect, "지우기" to onDelete)
+                            }
+                            labels.forEach { (label, action) ->
+                                TextButton(onClick = action) {
+                                    Text(
+                                        label,
+                                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                                        style = MaterialTheme.typography.labelLarge,
+                                    )
+                                }
+                            }
+                            TextButton(onClick = onClearSelection) {
+                                Text(
+                                    "해제",
+                                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                            }
                         }
-                        OutlinedButton(onClick = onDismissMissed) { Text("코드 아님") }
-                        OutlinedButton(onClick = onClearSelection) { Text("해제") }
                     }
                 }
 
-                selectedCount > 0 -> {
-                    Text(
-                        "${selectedCount}개 선택됨",
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onCorrect, modifier = Modifier.weight(1f)) {
-                            Text("코드 고치기")
-                        }
-                        OutlinedButton(onClick = onDelete) { Text("지우기") }
-                        OutlinedButton(onClick = onClearSelection) { Text("해제") }
-                    }
-                }
-
-                else -> {
-                    Text(
-                        "고칠 자리를 누르세요. 코드는 여러 개를 한 번에 고를 수 있습니다.",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    LegendRow(Color(markingColor), "앱이 찾은 코드 — 고치거나 지웁니다")
-                    if (missedCount > 0) {
-                        Spacer(Modifier.height(3.dp))
-                        LegendRow(
-                            Color(0xFFFF7597),
-                            "넣지 않은 자리 ${missedCount}곳 — 넣거나 없앱니다",
+                // Floating rather than in a row of its own: a bar at the foot of a dialog
+                // ends up under the system gesture bar, where it cannot be read or pressed.
+                Row(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 12.dp, bottom = 28.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        shadowElevation = 4.dp,
+                    ) {
+                        Text(
+                            "${(zoom * 100).toInt()}% · 코드 ${entries.size}개",
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                         )
+                    }
+                    OutlinedButton(
+                        onClick = { zoom = (zoom / 1.6f).coerceAtLeast(1f) },
+                        modifier = Modifier.size(46.dp),
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Icon(Icons.Filled.Remove, contentDescription = "축소")
+                    }
+                    OutlinedButton(
+                        onClick = { zoom = (zoom * 1.6f).coerceAtMost(10f) },
+                        modifier = Modifier.size(46.dp),
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = "확대")
                     }
                 }
             }

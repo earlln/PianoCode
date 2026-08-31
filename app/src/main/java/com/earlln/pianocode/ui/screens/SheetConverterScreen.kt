@@ -212,12 +212,17 @@ fun SheetConverterScreen(
             missed = state.openMissed,
             selectedIds = state.selectedIds,
             selectedMissed = state.selectedMissed,
+            changedCount = state.changedCount,
             onTap = viewModel::tapAt,
             onCorrect = { showPicker = true },
             onDelete = viewModel::deleteSelected,
             onAdoptMissed = viewModel::adoptMissed,
             onDismissMissed = viewModel::dismissMissed,
             onClearSelection = viewModel::clearSelection,
+            onApply = {
+                viewModel.closeEditor()
+                viewModel.renderResult()
+            },
             onClose = viewModel::closeEditor,
         )
     }
