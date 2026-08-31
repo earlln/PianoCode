@@ -30,6 +30,20 @@ object ChordParser {
      */
     @JvmOverloads
     fun parse(text: String, requireUppercaseRoot: Boolean = false): Chord? {
+        val spelling = spellingOf(text, requireUppercaseRoot) ?: return null
+        val quality = readQuality(spelling.suffixText) ?: return null
+        return Chord(spelling.root, quality, spelling.bass)
+    }
+
+    /**
+     * Takes a symbol apart into the pieces it was written with, keeping the text of each.
+     *
+     * The letters matter as well as the chord they name: a sheet writing `G(add2)` should be
+     * answered in the same hand, not rewritten as `Gadd9` because that is how the catalogue
+     * happens to spell the quality.
+     */
+    @JvmOverloads
+    fun spellingOf(text: String, requireUppercaseRoot: Boolean = false): ChordSpelling? {
         val cleaned = normalise(text)
         if (cleaned.isEmpty()) return null
         // Lower-case roots are legal in typed input but, on a scanned page, a stray `a` or
@@ -38,26 +52,28 @@ object ChordParser {
 
         val slashIndex = cleaned.lastIndexOf('/')
         val bodyText: String
+        val bassText: String?
         val bass: Note?
-        if (slashIndex > 0) {
-            val bassText = cleaned.substring(slashIndex + 1)
-            val parsedBass = parseNote(bassText)
-            if (parsedBass != null) {
-                bodyText = cleaned.substring(0, slashIndex)
-                bass = parsedBass
-            } else {
-                bodyText = cleaned
-                bass = null
-            }
+        val afterSlash = if (slashIndex > 0) cleaned.substring(slashIndex + 1) else null
+        val parsedBass = afterSlash?.let { parseNote(it) }
+        if (parsedBass != null) {
+            bodyText = cleaned.substring(0, slashIndex)
+            bassText = afterSlash
+            bass = parsedBass
         } else {
             bodyText = cleaned
+            bassText = null
             bass = null
         }
 
         val root = readRoot(bodyText) ?: return null
-        val suffix = bodyText.substring(root.second)
-        val quality = readQuality(suffix) ?: return null
-        return Chord(root.first, quality, bass)
+        return ChordSpelling(
+            root = root.first,
+            rootText = bodyText.substring(0, root.second),
+            suffixText = bodyText.substring(root.second),
+            bass = bass,
+            bassText = bassText,
+        )
     }
 
     /** True when [text] looks like a chord symbol and nothing else. */
@@ -171,4 +187,13 @@ data class ParsedChord(
     val start: Int,
     val end: Int,
     val rawText: String,
+)
+
+/** A chord symbol taken apart, with the text each piece was written with. */
+data class ChordSpelling(
+    val root: Note,
+    val rootText: String,
+    val suffixText: String,
+    val bass: Note?,
+    val bassText: String?,
 )

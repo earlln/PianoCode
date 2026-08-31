@@ -430,3 +430,43 @@ class ChordLibraryTest {
         assertTrue(ChordLibrary.totalChordCount >= 800)
     }
 }
+
+class ChordStyleTest {
+
+    private fun restyle(printed: String, to: String): String {
+        val original = ChordParser.parse(printed)!!
+        val converted = ChordParser.parse(to)!!
+        return ChordStyle.restyle(printed, original, converted)
+    }
+
+    @Test
+    fun `keeps the sheet's own way of writing the quality`() {
+        assertEquals("C(add2)", restyle("G(add2)", "Cadd9"))
+        assertEquals("CΔ7", restyle("GΔ7", "Cmaj7"))
+        assertEquals("C-7", restyle("G-7", "Cm7"))
+        assertEquals("Cm7", restyle("Gm7", "Cm7"))
+    }
+
+    @Test
+    fun `closes a bracket the scan lost`() {
+        assertEquals("C(add2)", restyle("G(add2", "Cadd9"))
+        assertEquals("C(add2)", restyle("Gadd2)", "Cadd9"))
+    }
+
+    @Test
+    fun `carries the slash bass of the converted chord, not the printed one`() {
+        assertEquals("C/E", restyle("A/C#", "C/E"))
+        assertEquals("Cm7/Bb", restyle("Gm7/F", "Cm7/Bb"))
+    }
+
+    @Test
+    fun `falls back to the catalogue when the printed text is not that chord`() {
+        // A misreading corrected by hand: the raw text describes a different chord, so its
+        // spelling says nothing about the one that was meant.
+        val original = ChordParser.parse("C#m7")!!
+        val converted = ChordParser.parse("Bm7")!!
+        assertEquals("Bm7", ChordStyle.restyle("Cdm7", original, converted))
+        assertEquals("Bm7", ChordStyle.restyle("Gmaj7", original, converted))
+        assertEquals("Bm7", ChordStyle.restyle("", original, converted))
+    }
+}

@@ -103,7 +103,16 @@ data class SheetConverterState(
     val replacements: List<Pair<Rect, String>>
         get() = conversions
             .filter { (entry, _) -> entry.enabled }
-            .map { (entry, conversion) -> entry.bounds to conversion.converted.symbol }
+            .map { (entry, conversion) -> entry.bounds to drawnSymbol(entry, conversion) }
+
+    /**
+     * The symbol written back onto the page, in the sheet's own way of writing it.
+     *
+     * A page that says `G(add2)` gets `C(add2)` rather than `Cadd9`: the same chord, but
+     * the player is reading a page they already know.
+     */
+    fun drawnSymbol(entry: SheetEntry, conversion: ChordConversion): String =
+        ChordStyle.restyle(entry.rawText, entry.original, conversion.converted)
 
     val changedCount: Int
         get() = conversions.count { (entry, conversion) -> entry.enabled && conversion.changed }

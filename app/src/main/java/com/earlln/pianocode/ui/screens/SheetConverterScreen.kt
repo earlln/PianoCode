@@ -586,7 +586,9 @@ fun SheetConverterScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Text(
-                                    conversion.converted.prettySymbol,
+                                    // What will actually be drawn, so the list and the
+                                    // page never disagree about a chord's spelling.
+                                    state.drawnSymbol(entry, conversion),
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold,
                                     color = if (enabled) {
