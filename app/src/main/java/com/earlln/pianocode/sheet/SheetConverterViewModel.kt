@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.earlln.pianocode.music.Chord
 import com.earlln.pianocode.music.ChordConversion
+import com.earlln.pianocode.music.ChordParser
 import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.music.Note
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -61,8 +63,11 @@ data class SheetConverterState(
     val entries: List<SheetEntry> = emptyList(),
     val missed: List<MissedCandidate> = emptyList(),
     val selectedIds: Set<String> = emptySet(),
-    /** Leftovers the user has declared not to be chords, so they stop being flagged. */
-    val hiddenMissed: Set<String> = emptySet(),
+    /**
+     * Spots the user has declared not to be chords — a flagged leftover waved away, or a
+     * reading deleted. Held as areas rather than ids so it survives a fresh read of the page.
+     */
+    val dismissed: List<Rect> = emptyList(),
     /** The leftover currently picked out in the editor, if any. */
     val selectedMissed: String? = null,
     val sourceKey: Key = Key(Note(0, 0), ScaleType.MAJOR),
@@ -71,6 +76,10 @@ data class SheetConverterState(
     val keyWasDetected: Boolean = false,
     val markConverted: Boolean = true,
     val markingColor: MarkingColor = MarkingColor.VIOLET,
+    /** What this page looks like, used to find what was taught about it before. */
+    val fingerprint: String? = null,
+    /** How many earlier corrections this page came back with. */
+    val restoredCount: Int = 0,
     val editorOpen: Boolean = false,
     /** A blank spot the user tapped, waiting for them to say what belongs there. */
     val pendingSpot: Rect? = null,
@@ -109,7 +118,7 @@ data class SheetConverterState(
      */
     val openMissed: List<MissedCandidate>
         get() = missed.filter { candidate ->
-            candidate.key !in hiddenMissed &&
+            dismissed.none { overlaps(it, candidate.bounds) } &&
                 entries.none { overlaps(it.bounds, candidate.bounds) }
         }
 
@@ -119,7 +128,7 @@ data class SheetConverterState(
      */
     val leftBehindCount: Int
         get() = missed.count { candidate ->
-            candidate.key !in hiddenMissed &&
+            dismissed.none { overlaps(it, candidate.bounds) } &&
                 entries.none { it.enabled && overlaps(it.bounds, candidate.bounds) }
         } + rejectedCount
 
@@ -148,6 +157,18 @@ data class SheetConverterState(
             (if (markConverted) " · ${markingColor.koreanName}이 바뀐 코드" else "") +
             " · 코드 심볼만 변경 (오선보 조표·음표는 원본 그대로)"
 
+    /** Everything the user taught the app about this page, in a form that outlives it. */
+    internal fun notes(): SheetNotes = SheetNotes(
+        dismissed = dismissed,
+        corrections = entries
+            .filter { it.corrected && it.origin == EntryOrigin.RECOGNISED }
+            .map { PlacedChord(it.bounds, it.original.symbol) },
+        additions = entries
+            .filter { it.origin == EntryOrigin.MANUAL }
+            .map { PlacedChord(it.bounds, it.original.symbol) },
+        disabled = entries.filter { !it.enabled }.map { it.bounds },
+    )
+
     internal fun overlaps(a: Rect, b: Rect): Boolean =
         a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
 }
@@ -171,8 +192,10 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     entries = emptyList(),
                     missed = emptyList(),
                     selectedIds = emptySet(),
-                    hiddenMissed = emptySet(),
+                    dismissed = emptyList(),
                     selectedMissed = null,
+                    fingerprint = null,
+                    restoredCount = 0,
                     editorOpen = false,
                     pendingSpot = null,
                     pendingText = null,
@@ -201,7 +224,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 return@launch
             }
 
-            val entries = scan.chords.map {
+            val read = scan.chords.map {
                 SheetEntry(
                     id = it.id,
                     bounds = it.bounds,
@@ -210,6 +233,16 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     confidence = it.confidence,
                 )
             }
+
+            // What this page was taught last time, found by what it looks like.
+            val fingerprint = withContext(Dispatchers.Default) {
+                SheetMemoryStore.fingerprintOf(bitmap)
+            }
+            val notes = withContext(Dispatchers.IO) {
+                SheetMemoryStore.load(context, fingerprint)
+            }
+            val (entries, restored) = restore(read, notes, _state.value)
+
             val detectedKey = Transposer.detectKey(entries.map { it.original })
             val marking = withContext(Dispatchers.Default) {
                 SheetRenderer.pickMarkingColor(bitmap, entries.map { it.bounds })
@@ -221,13 +254,18 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     sourceBitmap = bitmap,
                     entries = entries,
                     missed = scan.missed,
+                    dismissed = notes.dismissed,
+                    fingerprint = fingerprint,
+                    restoredCount = restored,
                     sourceKey = detectedKey ?: current.sourceKey,
                     keyWasDetected = detectedKey != null,
                     markingColor = marking,
-                    message = if (entries.isEmpty()) {
-                        "코드를 찾지 못했습니다. 코드 심볼이 또렷하게 보이는 사진으로 다시 시도해 보세요."
-                    } else {
-                        null
+                    message = when {
+                        entries.isEmpty() ->
+                            "코드를 찾지 못했습니다. 코드 심볼이 또렷하게 보이는 사진으로 다시 시도해 보세요."
+                        restored > 0 ->
+                            "전에 이 악보에서 고친 내용 ${restored}곳을 그대로 불러왔습니다."
+                        else -> null
                     },
                 )
             }
@@ -331,9 +369,13 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
     }
 
     /** Waves the picked leftover away: notation or lyrics, never a chord. */
-    fun dismissMissed() = _state.update { current ->
-        val flagged = current.selectedMissed ?: return@update current
-        current.copy(hiddenMissed = current.hiddenMissed + flagged, selectedMissed = null)
+    fun dismissMissed() = applyEdit { current ->
+        val candidate = current.openMissed.firstOrNull { it.key == current.selectedMissed }
+            ?: return@update current
+        current.copy(
+            dismissed = current.dismissed + candidate.bounds,
+            selectedMissed = null,
+        )
     }
 
     fun cancelPendingSpot() = _state.update { it.copy(pendingSpot = null, pendingText = null) }
@@ -344,21 +386,19 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
      * The same spot is usually also sitting in the leftovers list, so it is silenced too:
      * deleting a misreading only to have it come back as a flag would be no deletion at all.
      */
-    fun deleteSelected() = _state.update { current ->
+    fun deleteSelected() = applyEdit { current ->
         val dropped = current.entries.filter { it.id in current.selectedIds }
-        val silenced = current.missed
-            .filter { candidate -> dropped.any { current.overlaps(it.bounds, candidate.bounds) } }
-            .map { it.key }
+        if (dropped.isEmpty()) return@update current
         current.copy(
             entries = current.entries.filterNot { it.id in current.selectedIds },
-            hiddenMissed = current.hiddenMissed + silenced,
+            dismissed = current.dismissed + dropped.map { it.bounds },
             selectedIds = emptySet(),
             resultBitmap = null,
         )
     }
 
     /** Turns one reading on or off from the list on the settings screen. */
-    fun toggleEntry(id: String) = _state.update { current ->
+    fun toggleEntry(id: String) = applyEdit { current ->
         current.copy(
             entries = current.entries.map {
                 if (it.id == id) it.copy(enabled = !it.enabled) else it
@@ -367,7 +407,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         )
     }
 
-    fun enableAll() = _state.update { current ->
+    fun enableAll() = applyEdit { current ->
         current.copy(entries = current.entries.map { it.copy(enabled = true) }, resultBitmap = null)
     }
 
@@ -391,7 +431,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 corrected = true,
                 origin = EntryOrigin.MANUAL,
             )
-            _state.update {
+            applyEdit {
                 it.copy(
                     entries = it.entries + entry,
                     pendingSpot = null,
@@ -403,7 +443,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         }
 
         if (current.selectedIds.isEmpty()) return
-        _state.update {
+        applyEdit {
             it.copy(
                 entries = it.entries.map { entry ->
                     if (entry.id in it.selectedIds) {
@@ -434,6 +474,133 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
             spot.left + width / 2,
             spot.top + height / 2,
         )
+    }
+
+    // --- remembering a page -------------------------------------------------
+
+    /**
+     * Applies an edit and files it against this page.
+     *
+     * Reading is deterministic, so a page opened twice is misread twice in exactly the same
+     * places. Correcting it would otherwise be work to redo on every visit — and a page is
+     * opened again precisely because the first pass did not finish it.
+     */
+    private fun applyEdit(transform: (SheetConverterState) -> SheetConverterState) {
+        remember(_state.updateAndGet(transform))
+    }
+
+    private fun remember(state: SheetConverterState) {
+        val fingerprint = state.fingerprint ?: return
+        val notes = state.notes()
+        val context = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            SheetMemoryStore.save(context, fingerprint, notes)
+        }
+    }
+
+    /**
+     * Throws away what was remembered here and reads the page again.
+     *
+     * Re-reading rather than undoing, because a deleted reading cannot be put back from what
+     * is left on screen — it was dropped before the page was ever shown.
+     */
+    fun forgetSheet() {
+        val current = _state.value
+        val fingerprint = current.fingerprint ?: return
+        val source = current.sourceBitmap ?: return
+        val context = getApplication<Application>()
+
+        viewModelScope.launch {
+            _state.update { it.copy(stage = ConverterStage.ANALYZING, resultBitmap = null) }
+            withContext(Dispatchers.IO) { SheetMemoryStore.forget(context, fingerprint) }
+
+            val scan = try {
+                recognizer.recognize(source)
+            } catch (error: Exception) {
+                _state.update {
+                    it.copy(
+                        stage = ConverterStage.READY,
+                        message = "다시 읽지 못했습니다: ${error.message ?: "알 수 없는 오류"}",
+                    )
+                }
+                return@launch
+            }
+
+            _state.update { state ->
+                state.copy(
+                    stage = ConverterStage.READY,
+                    entries = scan.chords.map {
+                        SheetEntry(
+                            id = it.id,
+                            bounds = it.bounds,
+                            original = it.chord,
+                            rawText = it.rawText,
+                            confidence = it.confidence,
+                        )
+                    },
+                    missed = scan.missed,
+                    dismissed = emptyList(),
+                    selectedIds = emptySet(),
+                    selectedMissed = null,
+                    restoredCount = 0,
+                    resultBitmap = null,
+                    message = "저장해 둔 수정 내용을 지우고 악보를 다시 읽었습니다.",
+                )
+            }
+        }
+    }
+
+    /**
+     * Puts earlier corrections back onto a freshly read page.
+     *
+     * They are matched by area rather than by identity: the ids a read hands out mean
+     * nothing across two readings, but a chord printed on paper stays where it is.
+     */
+    private fun restore(
+        entries: List<SheetEntry>,
+        notes: SheetNotes,
+        state: SheetConverterState,
+    ): Pair<List<SheetEntry>, Int> {
+        if (notes.isEmpty) return entries to 0
+        var restored = 0
+
+        val kept = entries.mapNotNull { entry ->
+            if (notes.dismissed.any { state.overlaps(it, entry.bounds) }) {
+                restored++
+                return@mapNotNull null
+            }
+            var updated = entry
+            notes.corrections
+                .firstOrNull { state.overlaps(it.bounds, entry.bounds) }
+                ?.let { correction ->
+                    ChordParser.parse(correction.symbol)?.let { chord ->
+                        restored++
+                        updated = updated.copy(original = chord, corrected = true)
+                    }
+                }
+            if (notes.disabled.any { state.overlaps(it, entry.bounds) }) {
+                restored++
+                updated = updated.copy(enabled = false)
+            }
+            updated
+        }
+
+        val added = notes.additions.mapIndexedNotNull { index, placed ->
+            val chord = ChordParser.parse(placed.symbol) ?: return@mapIndexedNotNull null
+            if (kept.any { state.overlaps(it.bounds, placed.bounds) }) return@mapIndexedNotNull null
+            restored++
+            SheetEntry(
+                id = "remembered-$index",
+                bounds = placed.bounds,
+                original = chord,
+                rawText = placed.symbol,
+                confidence = 1f,
+                corrected = true,
+                origin = EntryOrigin.MANUAL,
+            )
+        }
+
+        return (kept + added) to restored
     }
 
     // --- output -------------------------------------------------------------
