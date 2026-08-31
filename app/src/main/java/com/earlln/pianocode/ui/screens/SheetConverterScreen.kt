@@ -2,6 +2,7 @@ package com.earlln.pianocode.ui.screens
 
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.graphics.Bitmap
 import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -77,6 +79,7 @@ import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.sheet.ConverterStage
 import com.earlln.pianocode.sheet.MarkingColor
+import com.earlln.pianocode.sheet.PickerTarget
 import com.earlln.pianocode.sheet.SheetConverterState
 import com.earlln.pianocode.sheet.SheetConverterViewModel
 import com.earlln.pianocode.ui.components.SectionHeader
@@ -131,7 +134,7 @@ fun SheetConverterScreen(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     var showResult by remember { mutableStateOf(true) }
-    var showPicker by remember { mutableStateOf(false) }
+    var viewerPage by remember { mutableStateOf<Bitmap?>(null) }
     // Converting every reading is cheap, but do it once per state change, not per row.
     val conversions = remember(state.entries, state.sourceKey, state.targetKey, state.mode) {
         state.conversions
@@ -200,6 +203,14 @@ fun SheetConverterScreen(
         if (state.resultBitmap != null) showResult = true
     }
 
+    viewerPage?.let { page ->
+        SheetViewerDialog(
+            bitmap = page,
+            title = if (page === state.resultBitmap) "변환된 악보" else "원본 악보",
+            onClose = { viewerPage = null },
+        )
+    }
+
     // The editor works on the sheet as printed. Correcting asks what the page carries, so
     // the page shown has to be the one carrying it — and an edit clears the rendered result,
     // which would otherwise swap the image out from under the finger mid-edit.
@@ -214,7 +225,7 @@ fun SheetConverterScreen(
             selectedMissed = state.selectedMissed,
             changedCount = state.changedCount,
             onTap = viewModel::tapAt,
-            onCorrect = { showPicker = true },
+            onCorrect = viewModel::beginCorrection,
             onDelete = viewModel::deleteSelected,
             onAdoptMissed = viewModel::adoptMissed,
             onDismissMissed = viewModel::dismissMissed,
@@ -227,21 +238,16 @@ fun SheetConverterScreen(
         )
     }
 
-    // Opened either by correcting a selection or by tapping bare paper.
-    if (showPicker || state.pendingSpot != null) {
-        val selected = state.entries.filter { it.id in state.selectedIds }
+    // Opened either by correcting a selection or by naming a spot with no reading yet.
+    state.pickerTarget?.let { target ->
+        val named = (target as? PickerTarget.Entries)
+            ?.let { entries -> state.entries.firstOrNull { it.id in entries.ids } }
         ChordPickerSheet(
-            originalText = selected.firstOrNull()?.rawText ?: state.pendingText,
-            suggestion = selected.firstOrNull()?.original,
+            originalText = named?.rawText ?: (target as? PickerTarget.Spot)?.readAs,
+            suggestion = named?.original,
             transpose = viewModel::transposeForPage,
-            onDismiss = {
-                showPicker = false
-                viewModel.cancelPendingSpot()
-            },
-            onPick = {
-                showPicker = false
-                viewModel.applyChord(it)
-            },
+            onDismiss = viewModel::cancelPicker,
+            onPick = viewModel::applyChord,
         )
     }
 
@@ -362,9 +368,8 @@ fun SheetConverterScreen(
                             // A transform detector consumed every drag across the page, so
                             // the list underneath could not be scrolled by dragging the one
                             // thing filling the screen. A tap detector leaves a drag alone.
-                            .pointerInput(state.entries.isNotEmpty()) {
-                                if (state.entries.isEmpty()) return@pointerInput
-                                detectTapGestures(onDoubleTap = { viewModel.openEditor() })
+                            .pointerInput(preview) {
+                                detectTapGestures(onDoubleTap = { viewerPage = preview })
                             },
                     )
 
@@ -375,11 +380,12 @@ fun SheetConverterScreen(
                             context = context,
                             onConvert = viewModel::renderResult,
                             onEdit = viewModel::openEditor,
+                            onView = { viewerPage = preview },
                             onSave = { viewModel.saveResult {} },
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "그림을 두 번 두드려도 직접 고치기가 열립니다. " +
+                            "그림을 두 번 두드리면 크게 볼 수 있습니다. " +
                                 "아래에서 조성과 세부 설정을 바꿀 수 있습니다.",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -681,6 +687,7 @@ private fun SheetActions(
     context: Context,
     onConvert: () -> Unit,
     onEdit: () -> Unit,
+    onView: () -> Unit,
     onSave: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -701,10 +708,17 @@ private fun SheetActions(
         }
 
         Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Edit, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("직접 고치기 (잘못 읽은 코드 고치기·지우기)")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onView, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Filled.ZoomIn, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("크게 보기")
+            }
+            OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Filled.Edit, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("직접 고치기")
+            }
         }
 
         if (state.resultBitmap != null) {

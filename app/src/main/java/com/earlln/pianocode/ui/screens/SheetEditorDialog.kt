@@ -48,6 +48,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -99,6 +100,19 @@ fun SheetEditorDialog(
     var pan by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(Size.Zero) }
     var actionsSize by remember { mutableStateOf(IntSize.Zero) }
+    // Reused across frames: allocating paints inside a draw pass is per-frame garbage.
+    val labelInk = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+    }
+    val labelPaper = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = 0xF2FFFFFF.toInt()
+        }
+    }
 
     // The page is laid out to the screen's width at zoom 1, so one number scales both axes
     // and the mapping back to page coordinates stays a division.
@@ -302,6 +316,41 @@ fun SheetEditorDialog(
                             colour,
                             if (selected) 4.dp.toPx() else 2.dp.toPx(),
                             fill = selected,
+                        )
+                    }
+
+                    // What the app believes is written at each spot, so a box that looks
+                    // right but reads wrong can be told apart from one that is simply
+                    // correct. Only once the page is enlarged enough for it to be legible.
+                    val labelSize = 13.dp.toPx()
+                    val minimumBox = 15.dp.toPx()
+                    labelInk.textSize = labelSize
+                    fun label(rect: Rect, text: String, ink: Int) {
+                        if (rect.height() * drawScale < minimumBox) return
+                        val x = pan.x + rect.left * drawScale
+                        val y = pan.y + rect.top * drawScale - 4.dp.toPx()
+                        val canvas = drawContext.canvas.nativeCanvas
+                        canvas.drawRect(
+                            x - 3f,
+                            y - labelSize,
+                            x + labelInk.measureText(text) + 3f,
+                            y + 4f,
+                            labelPaper,
+                        )
+                        labelInk.color = ink
+                        canvas.drawText(text, x, y, labelInk)
+                    }
+
+                    missed.forEach { label(it.bounds, it.text, 0xFFD81B60.toInt()) }
+                    entries.forEach { entry ->
+                        label(
+                            entry.bounds,
+                            entry.original.symbol,
+                            when {
+                                entry.id in selectedIds -> 0xFF1565C0.toInt()
+                                !entry.enabled -> 0xFF9E9E9E.toInt()
+                                else -> markingColor
+                            },
                         )
                     }
                 }

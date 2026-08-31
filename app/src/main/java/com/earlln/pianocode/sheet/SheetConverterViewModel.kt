@@ -29,6 +29,21 @@ internal val MissedCandidate.key: String
 /** Where the converter is in its pick → read → convert → save flow. */
 enum class ConverterStage { EMPTY, ANALYZING, READY, RENDERING }
 
+/**
+ * Where a chord chosen in the picker is written.
+ *
+ * Held as state rather than inferred at the moment of choosing. Reading it back from the
+ * selection meant a chord could be picked with nothing left to write it to — the picker
+ * silently did nothing, and the correction the user had just made was lost.
+ */
+sealed interface PickerTarget {
+    /** A place on the page with no reading yet: a blank spot, or a flagged leftover. */
+    data class Spot(val bounds: Rect, val readAs: String?) : PickerTarget
+
+    /** Readings already found, to be told what they actually say. */
+    data class Entries(val ids: Set<String>) : PickerTarget
+}
+
 /** Whether an entry came from reading the page or from the user placing it. */
 enum class EntryOrigin { RECOGNISED, MANUAL }
 
@@ -72,10 +87,8 @@ data class SheetConverterState(
     val markConverted: Boolean = true,
     val markingColor: MarkingColor = MarkingColor.VIOLET,
     val editorOpen: Boolean = false,
-    /** A blank spot the user tapped, waiting for them to say what belongs there. */
-    val pendingSpot: Rect? = null,
-    /** What the reader saw at that spot, when it came from a flagged leftover. */
-    val pendingText: String? = null,
+    /** What the chord picker will write to, and null when it is not open. */
+    val pickerTarget: PickerTarget? = null,
     val message: String? = null,
 ) {
     val enabledEntries: List<SheetEntry> get() = entries.filter { it.enabled }
@@ -174,8 +187,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     hiddenMissed = emptySet(),
                     selectedMissed = null,
                     editorOpen = false,
-                    pendingSpot = null,
-                    pendingText = null,
+                    pickerTarget = null,
                     message = null,
                 )
             }
@@ -262,8 +274,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
             editorOpen = false,
             selectedIds = emptySet(),
             selectedMissed = null,
-            pendingSpot = null,
-            pendingText = null,
+            pickerTarget = null,
         )
     }
 
@@ -305,8 +316,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
         _state.update {
             it.copy(
-                pendingSpot = grow(spot, current.typicalChordBounds),
-                pendingText = null,
+                pickerTarget = PickerTarget.Spot(grow(spot, current.typicalChordBounds), null),
                 selectedMissed = null,
             )
         }
@@ -324,8 +334,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         val candidate = current.openMissed.firstOrNull { it.key == current.selectedMissed }
             ?: return@update current
         current.copy(
-            pendingSpot = candidate.bounds,
-            pendingText = candidate.text,
+            pickerTarget = PickerTarget.Spot(candidate.bounds, candidate.text),
             selectedMissed = null,
         )
     }
@@ -336,7 +345,16 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         current.copy(hiddenMissed = current.hiddenMissed + flagged, selectedMissed = null)
     }
 
-    fun cancelPendingSpot() = _state.update { it.copy(pendingSpot = null, pendingText = null) }
+    /** Opens the picker on the current selection, so it can be told what it really says. */
+    fun beginCorrection() = _state.update { current ->
+        if (current.selectedIds.isEmpty()) {
+            current
+        } else {
+            current.copy(pickerTarget = PickerTarget.Entries(current.selectedIds))
+        }
+    }
+
+    fun cancelPicker() = _state.update { it.copy(pickerTarget = null) }
 
     /**
      * Drops the selected readings — notation the reader mistook for chords.
@@ -372,49 +390,54 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
     }
 
     /**
-     * Sets what the page says at every selected spot, or at a spot tapped on bare paper.
+     * Writes the chosen chord to whatever the picker was opened on.
      *
      * The conversion is not stored: only the corrected reading is. Pressing convert again
      * runs the whole page through the transposition afresh, so a fix here reaches the output
-     * the same way a correct reading would have.
+     * the same way a correct reading would have. A spot with no reading becomes one straight
+     * away — enabled, counted, and converted like every chord the reader found itself.
      */
     fun applyChord(original: Chord) {
-        val current = _state.value
-        val pending = current.pendingSpot
-        if (pending != null) {
-            val entry = SheetEntry(
-                id = "manual-${System.currentTimeMillis()}",
-                bounds = pending,
-                original = original,
-                rawText = current.pendingText ?: original.symbol,
-                confidence = 1f,
-                corrected = true,
-                origin = EntryOrigin.MANUAL,
-            )
-            _state.update {
+        when (val target = _state.value.pickerTarget) {
+            null -> return
+
+            is PickerTarget.Spot -> {
+                val entry = SheetEntry(
+                    id = "manual-${System.currentTimeMillis()}",
+                    bounds = target.bounds,
+                    original = original,
+                    rawText = target.readAs ?: original.symbol,
+                    confidence = 1f,
+                    corrected = true,
+                    origin = EntryOrigin.MANUAL,
+                )
+                // The pink flag under it goes on its own: openMissed drops any candidate
+                // an entry covers, so the spot turns into a chord box the moment this lands.
+                _state.update {
+                    it.copy(
+                        entries = it.entries + entry,
+                        pickerTarget = null,
+                        selectedIds = emptySet(),
+                        selectedMissed = null,
+                        resultBitmap = null,
+                    )
+                }
+            }
+
+            is PickerTarget.Entries -> _state.update {
                 it.copy(
-                    entries = it.entries + entry,
-                    pendingSpot = null,
-                    pendingText = null,
+                    entries = it.entries.map { entry ->
+                        if (entry.id in target.ids) {
+                            entry.copy(original = original, corrected = true, enabled = true)
+                        } else {
+                            entry
+                        }
+                    },
+                    pickerTarget = null,
+                    selectedIds = emptySet(),
                     resultBitmap = null,
                 )
             }
-            return
-        }
-
-        if (current.selectedIds.isEmpty()) return
-        _state.update {
-            it.copy(
-                entries = it.entries.map { entry ->
-                    if (entry.id in it.selectedIds) {
-                        entry.copy(original = original, corrected = true, enabled = true)
-                    } else {
-                        entry
-                    }
-                },
-                selectedIds = emptySet(),
-                resultBitmap = null,
-            )
         }
     }
 
