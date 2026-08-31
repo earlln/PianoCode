@@ -22,6 +22,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Identifies a leftover by where it sits, which is stable for as long as the page is. */
+internal val MissedCandidate.key: String
+    get() = "${bounds.left}:${bounds.top}:${bounds.right}:${bounds.bottom}"
+
 /** Where the converter is in its pick → read → convert → save flow. */
 enum class ConverterStage { EMPTY, ANALYZING, READY, RENDERING }
 
@@ -57,6 +61,10 @@ data class SheetConverterState(
     val entries: List<SheetEntry> = emptyList(),
     val missed: List<MissedCandidate> = emptyList(),
     val selectedIds: Set<String> = emptySet(),
+    /** Leftovers the user has declared not to be chords, so they stop being flagged. */
+    val hiddenMissed: Set<String> = emptySet(),
+    /** The leftover currently picked out in the editor, if any. */
+    val selectedMissed: String? = null,
     val sourceKey: Key = Key(Note(0, 0), ScaleType.MAJOR),
     val targetKey: Key = Key(Note(4, 0), ScaleType.MAJOR),
     val mode: ConversionMode = ConversionMode.TRANSPOSE,
@@ -66,6 +74,8 @@ data class SheetConverterState(
     val editorOpen: Boolean = false,
     /** A blank spot the user tapped, waiting for them to say what belongs there. */
     val pendingSpot: Rect? = null,
+    /** What the reader saw at that spot, when it came from a flagged leftover. */
+    val pendingText: String? = null,
     val message: String? = null,
 ) {
     val enabledEntries: List<SheetEntry> get() = entries.filter { it.enabled }
@@ -92,12 +102,25 @@ data class SheetConverterState(
     val rejectedCount: Int get() = entries.count { !it.enabled }
 
     /**
+     * Text that reads like a chord, no entry covers, and the user has not waved away.
+     *
+     * These are hints rather than output — nothing is painted at these spots — so the only
+     * two useful answers are "yes, that is a chord" and "no, stop showing me that".
+     */
+    val openMissed: List<MissedCandidate>
+        get() = missed.filter { candidate ->
+            candidate.key !in hiddenMissed &&
+                entries.none { overlaps(it.bounds, candidate.bounds) }
+        }
+
+    /**
      * How much of the page will stay in the original key: text that reads like a chord but
      * no entry covers, plus readings the user switched off.
      */
     val leftBehindCount: Int
         get() = missed.count { candidate ->
-            entries.none { it.enabled && overlaps(it.bounds, candidate.bounds) }
+            candidate.key !in hiddenMissed &&
+                entries.none { it.enabled && overlaps(it.bounds, candidate.bounds) }
         } + rejectedCount
 
     /** The size a chord occupies on this page, used to turn a tap into a box. */
@@ -148,8 +171,11 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                     entries = emptyList(),
                     missed = emptyList(),
                     selectedIds = emptySet(),
+                    hiddenMissed = emptySet(),
+                    selectedMissed = null,
                     editorOpen = false,
                     pendingSpot = null,
+                    pendingText = null,
                     message = null,
                 )
             }
@@ -231,15 +257,23 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
 
     fun openEditor() = _state.update { it.copy(editorOpen = true) }
 
-    fun closeEditor() =
-        _state.update { it.copy(editorOpen = false, selectedIds = emptySet(), pendingSpot = null) }
+    fun closeEditor() = _state.update {
+        it.copy(
+            editorOpen = false,
+            selectedIds = emptySet(),
+            selectedMissed = null,
+            pendingSpot = null,
+            pendingText = null,
+        )
+    }
 
     /**
      * Handles a tap on the page.
      *
      * Landing on a chord selects it — several can be held at once, so a misreading repeated
-     * down the page is corrected in one go. Landing on bare paper offers to add a chord the
-     * reader never saw.
+     * down the page is corrected in one go. Landing on a flagged leftover picks that out
+     * instead, to be adopted as a chord or waved away. Landing on bare paper offers to add
+     * a chord the reader never saw.
      */
     fun tapAt(spot: Rect) {
         val current = _state.value
@@ -247,6 +281,7 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         if (hit != null) {
             _state.update {
                 it.copy(
+                    selectedMissed = null,
                     selectedIds = if (hit.id in it.selectedIds) {
                         it.selectedIds - hit.id
                     } else {
@@ -256,17 +291,67 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
             }
             return
         }
-        _state.update { it.copy(pendingSpot = grow(spot, current.typicalChordBounds)) }
+
+        val leftover = current.openMissed.firstOrNull { current.overlaps(it.bounds, spot) }
+        if (leftover != null) {
+            _state.update {
+                it.copy(
+                    selectedIds = emptySet(),
+                    selectedMissed = if (it.selectedMissed == leftover.key) null else leftover.key,
+                )
+            }
+            return
+        }
+
+        _state.update {
+            it.copy(
+                pendingSpot = grow(spot, current.typicalChordBounds),
+                pendingText = null,
+                selectedMissed = null,
+            )
+        }
     }
 
-    fun clearSelection() = _state.update { it.copy(selectedIds = emptySet()) }
+    fun clearSelection() =
+        _state.update { it.copy(selectedIds = emptySet(), selectedMissed = null) }
 
-    fun cancelPendingSpot() = _state.update { it.copy(pendingSpot = null) }
+    /**
+     * Takes the picked leftover to be a chord after all, and asks what it says.
+     *
+     * The flag disappears on its own once an entry covers the spot.
+     */
+    fun adoptMissed() = _state.update { current ->
+        val candidate = current.openMissed.firstOrNull { it.key == current.selectedMissed }
+            ?: return@update current
+        current.copy(
+            pendingSpot = candidate.bounds,
+            pendingText = candidate.text,
+            selectedMissed = null,
+        )
+    }
 
-    /** Drops the selected readings — notation the reader mistook for chords. */
+    /** Waves the picked leftover away: notation or lyrics, never a chord. */
+    fun dismissMissed() = _state.update { current ->
+        val flagged = current.selectedMissed ?: return@update current
+        current.copy(hiddenMissed = current.hiddenMissed + flagged, selectedMissed = null)
+    }
+
+    fun cancelPendingSpot() = _state.update { it.copy(pendingSpot = null, pendingText = null) }
+
+    /**
+     * Drops the selected readings — notation the reader mistook for chords.
+     *
+     * The same spot is usually also sitting in the leftovers list, so it is silenced too:
+     * deleting a misreading only to have it come back as a flag would be no deletion at all.
+     */
     fun deleteSelected() = _state.update { current ->
+        val dropped = current.entries.filter { it.id in current.selectedIds }
+        val silenced = current.missed
+            .filter { candidate -> dropped.any { current.overlaps(it.bounds, candidate.bounds) } }
+            .map { it.key }
         current.copy(
             entries = current.entries.filterNot { it.id in current.selectedIds },
+            hiddenMissed = current.hiddenMissed + silenced,
             selectedIds = emptySet(),
             resultBitmap = null,
         )
@@ -301,13 +386,18 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 id = "manual-${System.currentTimeMillis()}",
                 bounds = pending,
                 original = original,
-                rawText = original.symbol,
+                rawText = current.pendingText ?: original.symbol,
                 confidence = 1f,
                 corrected = true,
                 origin = EntryOrigin.MANUAL,
             )
             _state.update {
-                it.copy(entries = it.entries + entry, pendingSpot = null, resultBitmap = null)
+                it.copy(
+                    entries = it.entries + entry,
+                    pendingSpot = null,
+                    pendingText = null,
+                    resultBitmap = null,
+                )
             }
             return
         }

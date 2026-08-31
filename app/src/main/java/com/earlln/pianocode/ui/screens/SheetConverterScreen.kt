@@ -209,11 +209,14 @@ fun SheetConverterScreen(
             },
             markingColor = state.markingColor.argb,
             entries = state.entries,
-            missed = state.missed,
+            missed = state.openMissed,
             selectedIds = state.selectedIds,
+            selectedMissed = state.selectedMissed,
             onTap = viewModel::tapAt,
             onCorrect = { showPicker = true },
             onDelete = viewModel::deleteSelected,
+            onAdoptMissed = viewModel::adoptMissed,
+            onDismissMissed = viewModel::dismissMissed,
             onClearSelection = viewModel::clearSelection,
             onClose = viewModel::closeEditor,
         )
@@ -223,7 +226,7 @@ fun SheetConverterScreen(
     if (showPicker || state.pendingSpot != null) {
         val selected = state.entries.filter { it.id in state.selectedIds }
         ChordPickerSheet(
-            originalText = selected.firstOrNull()?.rawText,
+            originalText = selected.firstOrNull()?.rawText ?: state.pendingText,
             suggestion = selected.firstOrNull()?.original,
             transpose = viewModel::transposeForPage,
             onDismiss = {
@@ -514,9 +517,9 @@ fun SheetConverterScreen(
 
             item {
                 LeftBehindWarning(
-                    missedCount = state.missed.size,
+                    missedCount = state.openMissed.size,
                     disabledCount = state.rejectedCount,
-                    missedSamples = state.missed.take(6).map { it.text },
+                    missedSamples = state.openMissed.take(6).map { it.text },
                     sourceWidth = state.sourceBitmap?.width ?: 0,
                     onEnableAll = viewModel::enableAll,
                     modifier = Modifier.padding(horizontal = 16.dp),

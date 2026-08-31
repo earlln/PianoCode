@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -33,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -47,6 +50,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.earlln.pianocode.sheet.MissedCandidate
 import com.earlln.pianocode.sheet.SheetEntry
+import com.earlln.pianocode.sheet.key
 
 /**
  * Full-screen editor for placing chords the conversion did not reach.
@@ -69,9 +73,12 @@ fun SheetEditorDialog(
     entries: List<SheetEntry>,
     missed: List<MissedCandidate>,
     selectedIds: Set<String>,
+    selectedMissed: String?,
     onTap: (Rect) -> Unit,
     onCorrect: () -> Unit,
     onDelete: () -> Unit,
+    onAdoptMissed: () -> Unit,
+    onDismissMissed: () -> Unit,
     onClearSelection: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -155,8 +162,7 @@ fun SheetEditorDialog(
                                 val page = toPage(tap)
                                 val x = page.x.toInt()
                                 val y = page.y.toInt() - bannerHeight
-                                val marked = missed.firstOrNull { it.bounds.contains(x, y) }
-                                onTap(marked?.bounds ?: Rect(x, y, x, y))
+                                onTap(Rect(x, y, x, y))
                             }
                         },
                 ) {
@@ -188,14 +194,15 @@ fun SheetEditorDialog(
                     }
 
                     // Text that reads like a chord but no entry covers — worth a look.
-                    missed.filter { candidate ->
-                        entries.none { entry ->
-                            entry.bounds.left < candidate.bounds.right &&
-                                candidate.bounds.left < entry.bounds.right &&
-                                entry.bounds.top < candidate.bounds.bottom &&
-                                candidate.bounds.top < entry.bounds.bottom
-                        }
-                    }.forEach { box(it.bounds, Color(0xFFFF7597), 2.dp.toPx()) }
+                    missed.forEach { candidate ->
+                        val picked = candidate.key == selectedMissed
+                        box(
+                            candidate.bounds,
+                            Color(0xFFFF7597),
+                            if (picked) 4.dp.toPx() else 2.dp.toPx(),
+                            fill = picked,
+                        )
+                    }
 
                     entries.forEach { entry ->
                         val selected = entry.id in selectedIds
@@ -234,12 +241,30 @@ fun SheetEditorDialog(
 
                 Spacer(Modifier.height(12.dp))
 
-                if (selectedIds.isEmpty()) {
+                if (selectedMissed != null) {
+                    Text("분홍색 표시 1곳 선택됨", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        "잘못 인식한 코드를 눌러 고르세요. 여러 개를 한 번에 고를 수 있습니다.",
+                        "여기는 아직 코드로 넣지 않은 자리입니다. 결과 그림에는 아무것도 그려지지 않습니다.",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = onAdoptMissed, modifier = Modifier.weight(1f)) {
+                            Text("코드로 넣기")
+                        }
+                        OutlinedButton(onClick = onDismissMissed) { Text("코드 아님") }
+                        OutlinedButton(onClick = onClearSelection) { Text("해제") }
+                    }
+                } else if (selectedIds.isEmpty()) {
+                    Text(
+                        "고칠 자리를 누르세요. 코드는 여러 개를 한 번에 고를 수 있습니다.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Legend(markingColor = markingColor, missedCount = missed.size)
                 } else {
                     Text(
                         "${selectedIds.size}개 선택됨",
@@ -257,5 +282,37 @@ fun SheetEditorDialog(
             }
             Spacer(Modifier.height(4.dp))
         }
+    }
+}
+
+/** Says what each outline on the page means, so a colour never has to be guessed at. */
+@Composable
+private fun Legend(markingColor: Int, missedCount: Int) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LegendRow(Color(markingColor), "앱이 찾은 코드 — 눌러서 고치거나 지웁니다")
+        if (missedCount > 0) {
+            LegendRow(
+                Color(0xFFFF7597),
+                "코드처럼 보이지만 넣지 않은 자리 ${missedCount}곳 — 눌러서 넣거나 없앱니다",
+            )
+        }
+    }
+}
+
+@Composable
+private fun LegendRow(color: Color, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(12.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(color),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
