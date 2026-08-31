@@ -116,6 +116,10 @@ fun SheetEditorDialog(
             0
         }
 
+    // Once a converted page exists, `원본` means the photograph as it was taken: no
+    // outlines, no labels, nothing the app added. Marks belong on the page being worked on.
+    val marksVisible = converted == null || showConverted
+
     val density = LocalDensity.current
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -128,12 +132,7 @@ fun SheetEditorDialog(
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
     }
-    val labelPaper = remember {
-        android.graphics.Paint().apply {
-            isAntiAlias = true
-            color = 0xF2FFFFFF.toInt()
-        }
-    }
+    val labelPaper = remember { android.graphics.Paint().apply { isAntiAlias = true } }
 
     // The page is laid out to the screen's width at zoom 1, so one number scales both axes
     // and the mapping back to page coordinates stays a division.
@@ -231,7 +230,10 @@ fun SheetEditorDialog(
                 ) {
                     FilterChip(
                         selected = !showConverted,
-                        onClick = { showConverted = false },
+                        onClick = {
+                            showConverted = false
+                            onClearSelection()
+                        },
                         label = { Text("원본") },
                     )
                     FilterChip(
@@ -255,7 +257,18 @@ fun SheetEditorDialog(
                 color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    if (focus != null) {
+                    if (!marksVisible) {
+                        Text(
+                            "찍은 그대로의 원본입니다. 표시도, 손댈 곳도 없습니다.",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "고치려면 `변환본`으로 돌아가세요. 확대한 자리는 그대로입니다.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else if (focus != null) {
                         Text(
                             if (selectedMissed != null) {
                                 "분홍색 표시 1곳 선택됨 — 그림 위 버튼으로 처리하세요."
@@ -309,8 +322,8 @@ fun SheetEditorDialog(
                                 return Rect(x, y, x, y)
                             }
                             detectTapGestures(
-                                onTap = { onTap(at(it)) },
-                                onLongPress = { onHold(at(it)) },
+                                onTap = { if (marksVisible) onTap(at(it)) },
+                                onLongPress = { if (marksVisible) onHold(at(it)) },
                                 onDoubleTap = { tap ->
                                     val previous = zoom
                                     zoom = if (zoom < 2.5f) 3f else 1f
@@ -353,6 +366,8 @@ fun SheetEditorDialog(
                         )
                     }
 
+                    if (!marksVisible) return@Canvas
+
                     // Text that reads like a chord but no entry covers — worth a look.
                     missed.forEach { candidate ->
                         val picked = candidate.key == selectedMissed
@@ -382,40 +397,46 @@ fun SheetEditorDialog(
                     // What the app believes is written at each spot, so a box that looks
                     // right but reads wrong can be told apart from one that is simply
                     // correct. Only once the page is enlarged enough for it to be legible.
+                    //
+                    // Light on a dark chip, never in the marking colour: on the converted
+                    // page the marking colour is what the app has just written onto the
+                    // sheet, and a label in the same colour reads as more of the same ink
+                    // rather than as a note about it.
                     val labelSize = 13.dp.toPx()
                     val minimumBox = 15.dp.toPx()
                     labelInk.textSize = labelSize
-                    fun label(rect: Rect, text: String, ink: Int) {
+                    labelInk.color = 0xFFFFFFFF.toInt()
+                    fun label(rect: Rect, text: String, chip: Int) {
                         if (rect.height() * drawScale < minimumBox) return
                         val x = pan.x + rect.left * drawScale
                         val y = pan.y + rect.top * drawScale - 4.dp.toPx()
                         val canvas = drawContext.canvas.nativeCanvas
+                        labelPaper.color = chip
                         canvas.drawRect(
-                            x - 3f,
+                            x - 4f,
                             y - labelSize,
-                            x + labelInk.measureText(text) + 3f,
-                            y + 4f,
+                            x + labelInk.measureText(text) + 4f,
+                            y + 5f,
                             labelPaper,
                         )
-                        labelInk.color = ink
                         canvas.drawText(text, x, y, labelInk)
                     }
 
-                    missed.forEach { label(it.bounds, it.text, 0xFFD81B60.toInt()) }
+                    missed.forEach { label(it.bounds, it.text, 0xFFC2185B.toInt()) }
                     entries.forEach { entry ->
                         label(
                             entry.bounds,
                             entry.original.symbol,
                             when {
                                 entry.id in selectedIds -> 0xFF1565C0.toInt()
-                                !entry.enabled -> 0xFF9E9E9E.toInt()
-                                else -> markingColor
+                                !entry.enabled -> 0xFF757575.toInt()
+                                else -> 0xE6263238.toInt()
                             },
                         )
                     }
                 }
 
-                if (focus != null) {
+                if (focus != null && marksVisible) {
                     val gap = with(density) { 10.dp.toPx() }
                     val drawScale = scale()
                     val centreX = pan.x + (focus.left + focus.right) / 2f * drawScale
