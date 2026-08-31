@@ -1,6 +1,7 @@
 package com.earlln.pianocode.ui.screens
 
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
@@ -9,7 +10,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -75,6 +77,7 @@ import com.earlln.pianocode.music.ConversionMode
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.sheet.ConverterStage
 import com.earlln.pianocode.sheet.MarkingColor
+import com.earlln.pianocode.sheet.SheetConverterState
 import com.earlln.pianocode.sheet.SheetConverterViewModel
 import com.earlln.pianocode.ui.components.SectionHeader
 import com.earlln.pianocode.util.ImageIo
@@ -351,22 +354,32 @@ fun SheetConverterScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            // Reaching to enlarge the page is exactly when someone wants a
-                            // closer look at a chord, so that gesture opens the editor
-                            // rather than asking them to find a button first.
+                            // A transform detector consumed every drag across the page, so
+                            // the list underneath could not be scrolled by dragging the one
+                            // thing filling the screen. A tap detector leaves a drag alone.
                             .pointerInput(state.entries.isNotEmpty()) {
                                 if (state.entries.isEmpty()) return@pointerInput
-                                detectTransformGestures { _, _, gestureZoom, _ ->
-                                    if (gestureZoom != 1f) viewModel.openEditor()
-                                }
+                                detectTapGestures(onDoubleTap = { viewModel.openEditor() })
                             },
                     )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "두 손가락으로 벌리면 크게 보면서 코드를 고칠 수 있습니다.",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+
+                    if (state.entries.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        SheetActions(
+                            state = state,
+                            context = context,
+                            onConvert = viewModel::renderResult,
+                            onEdit = viewModel::openEditor,
+                            onSave = { viewModel.saveResult {} },
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "그림을 두 번 두드려도 직접 고치기가 열립니다. " +
+                                "아래에서 조성과 세부 설정을 바꿀 수 있습니다.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -619,9 +632,10 @@ fun SheetConverterScreen(
                         Text("직접 고치기", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "위 그림을 두 손가락으로 벌리면 크게 열립니다. 거기서 잘못 읽은 " +
-                                "코드를 눌러 고치거나 지우고, 빈 곳을 눌러 코드를 새로 넣을 수 " +
-                                "있습니다. 고친 뒤 다시 변환하면 전체가 새 내용으로 바뀝니다.",
+                            "그림 아래 `직접 고치기`를 누르거나 그림을 두 번 두드리면 크게 " +
+                                "열립니다. 거기서 잘못 읽은 코드를 눌러 고치거나 지우고, 빈 곳을 " +
+                                "눌러 코드를 새로 넣을 수 있습니다. 고친 뒤 다시 변환하면 전체가 " +
+                                "새 내용으로 바뀝니다.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         if (state.correctedCount > 0 || state.rejectedCount > 0) {
@@ -640,67 +654,77 @@ fun SheetConverterScreen(
                                 color = Color(state.markingColor.argb),
                             )
                         }
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(onClick = viewModel::openEditor) { Text("크게 열기") }
                     }
                 }
             }
 
-            item {
-                Column(Modifier.padding(horizontal = 16.dp)) {
-                    Button(
-                        onClick = viewModel::renderResult,
-                        enabled = state.stage != ConverterStage.RENDERING,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (state.stage == ConverterStage.RENDERING) {
-                            CircularProgressIndicator(
-                                Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text("악보에 그리는 중…")
-                        } else {
-                            Icon(Icons.Filled.AutoFixHigh, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("악보에 ${state.changedCount}개 코드 바꿔 그리기")
-                        }
-                    }
-
-                    if (state.resultBitmap != null) {
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(
-                                onClick = { viewModel.saveResult {} },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(Icons.Filled.Save, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("저장")
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    state.resultBitmap?.let { bitmap ->
-                                        val intent = ImageIo.shareIntent(
-                                            context, bitmap, "PianoCode_sheet.png",
-                                        )
-                                        context.startActivity(
-                                            Intent.createChooser(intent, "악보 공유"),
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(Icons.Filled.Share, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("공유")
-                            }
-                        }
-                    }
-                }
-            }
         } else if (state.stage != ConverterStage.ANALYZING) {
             item { HowToCard(Modifier.padding(horizontal = 16.dp)) }
+        }
+    }
+}
+
+/**
+ * Convert, edit, save and share — kept directly under the page they act on.
+ *
+ * They used to sit at the foot of a long settings list, which meant scrolling past every
+ * key picker and every recognised chord to press the one button the screen exists for.
+ */
+@Composable
+private fun SheetActions(
+    state: SheetConverterState,
+    context: Context,
+    onConvert: () -> Unit,
+    onEdit: () -> Unit,
+    onSave: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Button(
+            onClick = onConvert,
+            enabled = state.stage != ConverterStage.RENDERING,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (state.stage == ConverterStage.RENDERING) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("악보에 그리는 중…")
+            } else {
+                Icon(Icons.Filled.AutoFixHigh, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("악보에 ${state.changedCount}개 코드 바꿔 그리기")
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Edit, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("직접 고치기 (잘못 읽은 코드 고치기·지우기)")
+        }
+
+        if (state.resultBitmap != null) {
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.Save, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("저장")
+                }
+                OutlinedButton(
+                    onClick = {
+                        state.resultBitmap?.let { bitmap ->
+                            val intent =
+                                ImageIo.shareIntent(context, bitmap, "PianoCode_sheet.png")
+                            context.startActivity(Intent.createChooser(intent, "악보 공유"))
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Filled.Share, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("공유")
+                }
+            }
         }
     }
 }
