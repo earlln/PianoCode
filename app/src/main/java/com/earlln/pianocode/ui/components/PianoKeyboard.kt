@@ -455,6 +455,88 @@ private fun DrawScope.drawDigit(
 }
 
 /**
+ * Draws the finger that goes on a key.
+ *
+ * A pale disc with the number on it, because a lit key says which note to play and says
+ * nothing about how — which is the part someone learning the chord is stuck on. The left
+ * hand's discs are outlined rather than filled, so a slash bass reads as the other hand at
+ * a glance instead of having to be counted.
+ */
+@OptIn(ExperimentalTextApi::class)
+private fun DrawScope.drawFinger(
+    textMeasurer: TextMeasurer,
+    finger: Int,
+    hand: Hand?,
+    keyColor: Color,
+    centerX: Float,
+    centerY: Float,
+    radius: Float,
+) {
+    val leftHand = hand == Hand.LEFT
+    drawCircle(
+        color = if (leftHand) Color(0xFF241F30) else Color.White,
+        radius = radius,
+        center = Offset(centerX, centerY),
+    )
+    drawCircle(
+        color = Color.White,
+        radius = radius,
+        center = Offset(centerX, centerY),
+        style = Stroke(width = 1.4f * density),
+    )
+    drawKeyLabel(
+        textMeasurer,
+        finger.toString(),
+        if (leftHand) Color.White else keyColor,
+        centerX = centerX,
+        baseline = centerY + radius * 0.58f,
+        fontSizePx = radius * 1.25f,
+    )
+}
+
+@OptIn(ExperimentalTextApi::class)
+private fun DrawScope.drawKeyLabel(
+    textMeasurer: TextMeasurer,
+    text: String,
+    color: Color,
+    centerX: Float,
+    baseline: Float,
+    fontSizePx: Float,
+    bold: Boolean = true,
+) {
+    val style = TextStyle(
+        color = color,
+        fontSize = (fontSizePx / density).sp,
+        fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+    )
+    val measured = textMeasurer.measure(text, style)
+    if (measured.size.width > 0) {
+        drawText(
+            textLayoutResult = measured,
+            topLeft = Offset(
+                centerX - measured.size.width / 2f,
+                baseline - measured.size.height,
+            ),
+        )
+    }
+}
+
+/** Highlights for a bare set of notes, used by the scale viewer. */
+fun noteHighlights(notes: List<Note>, startOctave: Int = 4): List<KeyHighlight> {
+    var previousMidi = Int.MIN_VALUE
+    return notes.map { note ->
+        var octave = startOctave
+        var pitch = Pitch(note, octave)
+        while (pitch.midi <= previousMidi) {
+            octave++
+            pitch = Pitch(note, octave)
+        }
+        previousMidi = pitch.midi
+        KeyHighlight(pitch.midi, KeyRole.CHORD_TONE, note.prettyName)
+    }
+}
+
+/**
  * Walks the inversions as the keyboard is dragged sideways.
  *
  * One step per quarter of the width, so a long drag walks several positions instead of
