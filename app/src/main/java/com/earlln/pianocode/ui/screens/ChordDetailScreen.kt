@@ -121,9 +121,10 @@ fun ChordDetailScreen(
                     chord = chord,
                     inversion = inversion,
                     startOctave = 3,
-                    height = 150.dp,
+                    height = 178.dp,
                     showLabels = true,
                     showFingers = true,
+                    showHand = true,
                     minOctaves = 2,
                     // Swiping the keyboard walks the inversions. The chips below do the
                     // same, but a hand already on the picture should not have to leave it
@@ -154,6 +155,7 @@ fun ChordDetailScreen(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "건반을 좌우로 밀면 자리바꿈이 넘어갑니다. " +
+                        "손 모양은 손가락이 어디로 뻗는지 보여 주는 실루엣이고, " +
                         "왼손이 짚는 자리는 어두운 동그라미입니다.",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
