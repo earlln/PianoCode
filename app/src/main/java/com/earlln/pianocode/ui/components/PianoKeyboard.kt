@@ -13,7 +13,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.ExperimentalTextApi
@@ -189,6 +189,7 @@ private fun DrawScope.drawKeyboard(
     // Gathered while the keys are drawn and used afterwards, so the hand lies over every
     // key rather than under the black ones, and the numbers sit on top of the hand.
     val fingertips = mutableListOf<Fingertip>()
+    val names = mutableListOf<NameDraw>()
 
     // --- White keys -------------------------------------------------------
     for (index in 0 until whiteCount) {
@@ -212,17 +213,19 @@ private fun DrawScope.drawKeyboard(
             fingertips += Fingertip(
                 finger = finger,
                 hand = highlight.hand ?: Hand.RIGHT,
-                center = Offset(left + whiteWidth / 2f, whiteHeight * 0.60f),
+                center = Offset(left + whiteWidth / 2f, whiteHeight * 0.50f),
                 radius = whiteWidth * 0.32f,
                 keyColor = highlight.role.color,
             )
         }
         val whiteLabel = highlight?.label
         if (showLabels && whiteLabel != null) {
-            drawKeyLabel(
-                textMeasurer, whiteLabel, Color.White,
+            // Held back until the hand is down: the palm covers the front of the keys,
+            // which is where these used to sit.
+            names += NameDraw(
+                text = whiteLabel,
                 centerX = left + whiteWidth / 2f,
-                baseline = whiteHeight - whiteHeight * 0.08f,
+                baseline = whiteHeight * if (showHand) 0.80f else 0.92f,
                 fontSizePx = labelSize,
             )
         } else if (showOctaveMarkers && index % 7 == 0) {
@@ -255,7 +258,7 @@ private fun DrawScope.drawKeyboard(
             fingertips += Fingertip(
                 finger = finger,
                 hand = highlight.hand ?: Hand.RIGHT,
-                center = Offset(centerX, blackHeight * 0.72f),
+                center = Offset(centerX, blackHeight * 0.70f),
                 radius = blackWidth * 0.38f,
                 keyColor = highlight.role.color,
             )
@@ -280,11 +283,19 @@ private fun DrawScope.drawKeyboard(
         }
     }
 
-    // --- The hand, then the numbers on top of it --------------------------
+    // --- The hand, then the writing on top of it --------------------------
     if (showHand) {
         fingertips.groupBy { it.hand }.forEach { (hand, spots) ->
             drawHand(spots, hand, whiteWidth, handOpacity)
         }
+    }
+    names.forEach { name ->
+        drawKeyLabel(
+            textMeasurer, name.text, Color.White,
+            centerX = name.centerX,
+            baseline = name.baseline,
+            fontSizePx = name.fontSizePx,
+        )
     }
     fingertips.forEach { tip ->
         drawFinger(
@@ -295,6 +306,14 @@ private fun DrawScope.drawKeyboard(
         )
     }
 }
+
+/** A note name waiting to be written, once the hand is out of its way. */
+private data class NameDraw(
+    val text: String,
+    val centerX: Float,
+    val baseline: Float,
+    val fontSizePx: Float,
+)
 
 /** A key that is going to be pressed, and where its finger lands on the picture. */
 private data class Fingertip(
@@ -310,12 +329,12 @@ private data class Fingertip(
  *
  * Numbers alone say which finger without saying what the hand does — whether it sits square
  * or reaches, where the thumb tucks, how far the span is. Drawing the shape answers that in
- * one look. It is deliberately a silhouette rather than a picture of a hand: the keys have
- * to stay readable underneath, and a photograph of someone else's hand tells you less about
- * yours than a shape you can lay your own over.
+ * one look.
  *
- * The knuckles sit at the back of the keyboard and the fingers reach towards the player,
- * which is how the hand meets the keys from where the reader is sitting.
+ * The player sits at the near edge, which on a keyboard drawn from above is the bottom of
+ * the picture. So the wrist comes in from below, the knuckles sit across the front of the
+ * keys, and the fingers reach away from the reader towards the back — the way their own
+ * hand will look when they put it down.
  */
 private fun DrawScope.drawHand(
     spots: List<Fingertip>,
@@ -323,146 +342,116 @@ private fun DrawScope.drawHand(
     whiteWidth: Float,
     opacity: Float,
 ) {
-    if (spots.size < 2) return
+    if (spots.isEmpty()) return
     val ordered = spots.sortedBy { it.center.x }
-    val skin = if (hand == Hand.LEFT) Color(0xFF3B3350) else Color(0xFF2E2740)
-    val knuckleY = size.height * 0.13f
-    val palmCentre = ordered.map { it.center.x }.average().toFloat()
-    val fingerWidth = (whiteWidth * 0.40f).coerceAtLeast(3f * density)
+    val thumb = ordered.firstOrNull { it.finger == 1 }
+    val longFingers = ordered.filter { it.finger != 1 }
+    if (longFingers.isEmpty()) return
 
-    // The thumb reaches in from the side of the hand, not down from the knuckles, so it is
-    // drawn from lower down and from whichever edge that hand's thumb actually sits on.
-    val thumb = spots.firstOrNull { it.finger == 1 }
-    val thumbAnchor = Offset(
-        if (hand == Hand.RIGHT) ordered.first().center.x else ordered.last().center.x,
-        size.height * 0.34f,
-    )
+    val skin = Color(0xFFD8A784)
+    val edge = Color(0xFF8A5F42)
+    val knuckleY = size.height * 0.88f
+    // The wrist runs off the bottom of the picture, the way a hand does off the near edge
+    // of a real keyboard.
+    val wristY = size.height * 1.14f
+    val palmCentre = longFingers.map { it.center.x }.average().toFloat()
+    val baseWidth = (whiteWidth * 0.46f).coerceAtLeast(4f * density)
+    val tipWidth = baseWidth * 0.66f
 
-    for (spot in ordered) {
-        val fromThumb = spot.finger == 1
-        val start = if (fromThumb) {
-            thumbAnchor
-        } else {
-            // Fingers converge a little towards the middle of the hand, the way they do
-            // when the knuckles are closer together than the fingertips.
-            Offset(spot.center.x + (palmCentre - spot.center.x) * 0.35f, knuckleY)
-        }
-        drawLine(
-            color = skin.copy(alpha = opacity),
-            start = start,
-            end = spot.center,
-            strokeWidth = if (fromThumb) fingerWidth * 1.35f else fingerWidth,
-            cap = StrokeCap.Round,
-        )
+    /** Where a finger leaves the hand: pulled towards the middle, and arched a little. */
+    fun knuckleOf(spot: Fingertip): Offset {
+        val x = spot.center.x + (palmCentre - spot.center.x) * 0.30f
+        val fromCentre = ((x - palmCentre) / (whiteWidth * 3f)).coerceIn(-1f, 1f)
+        return Offset(x, knuckleY + fromCentre * fromCentre * baseWidth * 0.5f)
     }
 
-    // The palm: a soft band across the knuckles tying the fingers into one hand.
-    val knuckles = ordered.filter { it.finger != 1 }.map { it.center.x }
-    if (knuckles.size >= 2) {
-        val left = knuckles.min() + (palmCentre - knuckles.min()) * 0.35f
-        val right = knuckles.max() + (palmCentre - knuckles.max()) * 0.35f
-        drawRoundRect(
-            color = skin.copy(alpha = opacity * 0.82f),
-            topLeft = Offset(left - fingerWidth * 0.7f, size.height * 0.02f),
-            size = Size(
-                (right - left) + fingerWidth * 1.4f,
-                knuckleY + fingerWidth * 0.5f - size.height * 0.02f,
-            ),
-            cornerRadius = CornerRadius(fingerWidth, fingerWidth),
+    // --- Palm, drawn first so the fingers sit on top of it -----------------
+    val leftBase = knuckleOf(longFingers.first())
+    val rightBase = knuckleOf(longFingers.last())
+    val palm = Path().apply {
+        moveTo(leftBase.x - baseWidth * 0.62f, leftBase.y)
+        lineTo(rightBase.x + baseWidth * 0.62f, rightBase.y)
+        // The heel of the hand narrows towards the wrist.
+        quadraticBezierTo(
+            rightBase.x + baseWidth * 0.30f, wristY - baseWidth,
+            palmCentre + baseWidth * 0.95f, wristY,
         )
-    }
-    if (thumb != null && knuckles.isNotEmpty()) {
-        // A short web from the palm down to where the thumb comes in.
-        drawLine(
-            color = skin.copy(alpha = opacity * 0.82f),
-            start = Offset(palmCentre, knuckleY),
-            end = thumbAnchor,
-            strokeWidth = fingerWidth * 1.6f,
-            cap = StrokeCap.Round,
+        lineTo(palmCentre - baseWidth * 0.95f, wristY)
+        quadraticBezierTo(
+            leftBase.x - baseWidth * 0.30f, wristY - baseWidth,
+            leftBase.x - baseWidth * 0.62f, leftBase.y,
         )
+        close()
     }
-}
+    drawPath(palm, skin.copy(alpha = opacity))
+    drawPath(palm, edge.copy(alpha = opacity * 0.7f), style = Stroke(width = 1.2f * density))
 
-@OptIn(ExperimentalTextApi::class)
-private fun DrawScope.drawKeyLabel(
-    textMeasurer: TextMeasurer,
-    text: String,
-    color: Color,
-    centerX: Float,
-    baseline: Float,
-    fontSizePx: Float,
-    bold: Boolean = true,
-) {
-    val style = TextStyle(
-        color = color,
-        fontSize = (fontSizePx / density).sp,
-        fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-    )
-    val measured = textMeasurer.measure(text, style)
-    if (measured.size.width > 0) {
-        drawText(
-            textLayoutResult = measured,
-            topLeft = Offset(
-                centerX - measured.size.width / 2f,
-                baseline - measured.size.height,
-            ),
+    // --- The thumb, which comes in from the side of the hand ---------------
+    if (thumb != null) {
+        val fromLeft = hand == Hand.RIGHT
+        val anchor = Offset(
+            palmCentre + if (fromLeft) -baseWidth * 0.9f else baseWidth * 0.9f,
+            wristY - baseWidth * 1.9f,
         )
+        drawDigit(anchor, thumb.center, baseWidth * 1.15f, tipWidth * 1.1f, skin, edge, opacity)
     }
-}
 
-/** Highlights for a bare set of notes, used by the scale viewer. */
-fun noteHighlights(notes: List<Note>, startOctave: Int = 4): List<KeyHighlight> {
-    var previousMidi = Int.MIN_VALUE
-    return notes.map { note ->
-        var octave = startOctave
-        var pitch = Pitch(note, octave)
-        while (pitch.midi <= previousMidi) {
-            octave++
-            pitch = Pitch(note, octave)
-        }
-        previousMidi = pitch.midi
-        KeyHighlight(pitch.midi, KeyRole.CHORD_TONE, note.prettyName)
+    // --- The four long fingers --------------------------------------------
+    for (spot in longFingers) {
+        drawDigit(knuckleOf(spot), spot.center, baseWidth, tipWidth, skin, edge, opacity)
     }
 }
 
 /**
- * Draws the finger that goes on a key.
+ * One finger: a tapered shape with a rounded end, rather than a stick.
  *
- * A pale disc with the number on it, because a lit key says which note to play and says
- * nothing about how — which is the part someone learning the chord is stuck on. The left
- * hand's discs are outlined rather than filled, so a slash bass reads as the other hand at
- * a glance instead of having to be counted.
+ * The taper is what makes it read as a finger — a line of even thickness reads as a wire no
+ * matter how it is coloured.
  */
-@OptIn(ExperimentalTextApi::class)
-private fun DrawScope.drawFinger(
-    textMeasurer: TextMeasurer,
-    finger: Int,
-    hand: Hand?,
-    keyColor: Color,
-    centerX: Float,
-    centerY: Float,
-    radius: Float,
+private fun DrawScope.drawDigit(
+    base: Offset,
+    tip: Offset,
+    baseWidth: Float,
+    tipWidth: Float,
+    skin: Color,
+    edge: Color,
+    opacity: Float,
 ) {
-    val leftHand = hand == Hand.LEFT
-    drawCircle(
-        color = if (leftHand) Color(0xFF241F30) else Color.White,
-        radius = radius,
-        center = Offset(centerX, centerY),
-    )
-    drawCircle(
-        color = Color.White,
-        radius = radius,
-        center = Offset(centerX, centerY),
-        style = Stroke(width = 1.4f * density),
-    )
-    drawKeyLabel(
-        textMeasurer,
-        finger.toString(),
-        if (leftHand) Color.White else keyColor,
-        centerX = centerX,
-        baseline = centerY + radius * 0.58f,
-        fontSizePx = radius * 1.25f,
-    )
+    val dx = tip.x - base.x
+    val dy = tip.y - base.y
+    val length = kotlin.math.sqrt(dx * dx + dy * dy)
+    if (length < 0.5f) return
+    val ux = dx / length
+    val uy = dy / length
+    // Perpendicular to the finger, for its two sides.
+    val px = -uy
+    val py = ux
+    val baseHalf = baseWidth / 2f
+    val tipHalf = tipWidth / 2f
+    // The fingertip rounds off just past the key it is on.
+    val overshootX = ux * tipHalf
+    val overshootY = uy * tipHalf
+
+    val path = Path().apply {
+        moveTo(base.x + px * baseHalf, base.y + py * baseHalf)
+        lineTo(tip.x + px * tipHalf, tip.y + py * tipHalf)
+        quadraticBezierTo(
+            tip.x + px * tipHalf + overshootX * 1.2f,
+            tip.y + py * tipHalf + overshootY * 1.2f,
+            tip.x + overshootX * 1.2f,
+            tip.y + overshootY * 1.2f,
+        )
+        quadraticBezierTo(
+            tip.x - px * tipHalf + overshootX * 1.2f,
+            tip.y - py * tipHalf + overshootY * 1.2f,
+            tip.x - px * tipHalf,
+            tip.y - py * tipHalf,
+        )
+        lineTo(base.x - px * baseHalf, base.y - py * baseHalf)
+        close()
+    }
+    drawPath(path, skin.copy(alpha = opacity))
+    drawPath(path, edge.copy(alpha = opacity * 0.7f), style = Stroke(width = 1.2f * density))
 }
 
 /**
