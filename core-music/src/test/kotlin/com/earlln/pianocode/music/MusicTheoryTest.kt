@@ -470,3 +470,48 @@ class ChordStyleTest {
         assertEquals("Bm7", ChordStyle.restyle("", original, converted))
     }
 }
+
+class FingeringTest {
+
+    private fun fingers(symbol: String, inversion: Int = 0): List<Int> {
+        val chord = ChordParser.parse(symbol)!!
+        return Fingering.forChord(chord, inversion = inversion).map { it.finger }
+    }
+
+    @Test
+    fun `a triad is fingered the way it is taught`() {
+        assertEquals(listOf(1, 3, 5), fingers("C"))
+        // E G C ends with a fourth, so the stretch goes between the middle and little finger.
+        assertEquals(listOf(1, 2, 5), fingers("C", inversion = 1))
+        assertEquals(listOf(1, 3, 5), fingers("C", inversion = 2))
+    }
+
+    @Test
+    fun `a seventh skips the ring finger`() {
+        assertEquals(listOf(1, 2, 3, 5), fingers("Cmaj7"))
+        assertEquals(listOf(1, 2, 3, 5), fingers("Am7", inversion = 2))
+    }
+
+    @Test
+    fun `the left hand takes a slash bass`() {
+        val chord = ChordParser.parse("C/E")!!
+        val placements = Fingering.forChord(chord)
+        assertEquals(Hand.LEFT, placements.first().hand)
+        assertEquals(5, placements.first().finger)
+        assertTrue(placements.drop(1).all { it.hand == Hand.RIGHT })
+        assertEquals(listOf(1, 3, 5), placements.drop(1).map { it.finger })
+    }
+
+    @Test
+    fun `more than five notes are shared between the hands`() {
+        val chord = ChordParser.parse("C13")!!
+        val placements = Fingering.forChord(chord)
+        assertTrue(placements.size > 5)
+        assertEquals(5, placements.count { it.hand == Hand.RIGHT })
+        assertTrue(placements.filter { it.hand == Hand.LEFT }.all { it.finger in 1..5 })
+        // Every key gets exactly one finger, and the hands do not overlap in pitch.
+        val left = placements.filter { it.hand == Hand.LEFT }
+        val right = placements.filter { it.hand == Hand.RIGHT }
+        assertTrue(left.maxOf { it.midi } < right.minOf { it.midi })
+    }
+}

@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.earlln.pianocode.music.Chord
+import com.earlln.pianocode.music.Fingering
+import com.earlln.pianocode.music.Hand
 import com.earlln.pianocode.music.Note
 import com.earlln.pianocode.music.Pitch
 import com.earlln.pianocode.ui.theme.Amber400
@@ -42,6 +44,9 @@ data class KeyHighlight(
     val midi: Int,
     val role: KeyRole,
     val label: String? = null,
+    /** The finger that goes here, 1 for the thumb — null when the fingering is hidden. */
+    val finger: Int? = null,
+    val hand: Hand? = null,
 )
 
 /** Semitone offsets of the seven white keys inside an octave. */
@@ -94,10 +99,11 @@ fun ChordKeyboard(
     startOctave: Int = 3,
     height: Dp = 132.dp,
     showLabels: Boolean = true,
+    showFingers: Boolean = false,
     minOctaves: Int = 2,
 ) {
-    val highlights = remember(chord, inversion, startOctave) {
-        chordHighlights(chord, inversion, startOctave)
+    val highlights = remember(chord, inversion, startOctave, showFingers) {
+        chordHighlights(chord, inversion, startOctave, showFingers)
     }
     PianoKeyboard(
         highlights = highlights,
@@ -112,10 +118,20 @@ fun ChordKeyboard(
  * Turns a chord into keys to light up: the root gets its own colour, notes above the
  * seventh count as tensions, and a slash bass is marked separately.
  */
-fun chordHighlights(chord: Chord, inversion: Int = 0, startOctave: Int = 3): List<KeyHighlight> {
+fun chordHighlights(
+    chord: Chord,
+    inversion: Int = 0,
+    startOctave: Int = 3,
+    withFingers: Boolean = false,
+): List<KeyHighlight> {
     val voicing: List<Pitch> = chord.voicing(startOctave, inversion)
     val hasSlash = chord.hasSlashBass
     val tones = chord.quality.tones
+    val fingering = if (withFingers) {
+        Fingering.forVoicing(voicing, hasSlash).associateBy { it.midi }
+    } else {
+        emptyMap()
+    }
     return voicing.mapIndexed { index, pitch ->
         val toneIndex = if (hasSlash) index - 1 else index
         val role = when {
@@ -124,7 +140,8 @@ fun chordHighlights(chord: Chord, inversion: Int = 0, startOctave: Int = 3): Lis
             tones.getOrNull(toneIndex)?.let { it.degree > 7 } == true -> KeyRole.TENSION
             else -> KeyRole.CHORD_TONE
         }
-        KeyHighlight(pitch.midi, role, pitch.note.prettyName)
+        val placement = fingering[pitch.midi]
+        KeyHighlight(pitch.midi, role, pitch.note.prettyName, placement?.finger, placement?.hand)
     }
 }
 
@@ -175,6 +192,14 @@ private fun DrawScope.drawKeyboard(
             cornerRadius = corner,
             style = Stroke(width = 1f * density),
         )
+        highlight?.finger?.let { finger ->
+            drawFinger(
+                textMeasurer, finger, highlight.hand, highlight.role.color,
+                centerX = left + whiteWidth / 2f,
+                centerY = whiteHeight * 0.62f,
+                radius = whiteWidth * 0.32f,
+            )
+        }
         val whiteLabel = highlight?.label
         if (showLabels && whiteLabel != null) {
             drawKeyLabel(
@@ -209,6 +234,14 @@ private fun DrawScope.drawKeyboard(
             size = Size(blackWidth, blackHeight),
             cornerRadius = corner,
         )
+        highlight?.finger?.let { finger ->
+            drawFinger(
+                textMeasurer, finger, highlight.hand, highlight.role.color,
+                centerX = centerX,
+                centerY = blackHeight * 0.66f,
+                radius = blackWidth * 0.38f,
+            )
+        }
         if (highlight == null) {
             // A faint top edge keeps the black keys from reading as one solid block.
             drawRoundRect(
@@ -270,4 +303,44 @@ fun noteHighlights(notes: List<Note>, startOctave: Int = 4): List<KeyHighlight> 
         previousMidi = pitch.midi
         KeyHighlight(pitch.midi, KeyRole.CHORD_TONE, note.prettyName)
     }
+}
+
+/**
+ * Draws the finger that goes on a key.
+ *
+ * A pale disc with the number on it, because a lit key says which note to play and says
+ * nothing about how — which is the part someone learning the chord is stuck on. The left
+ * hand's discs are outlined rather than filled, so a slash bass reads as the other hand at
+ * a glance instead of having to be counted.
+ */
+@OptIn(ExperimentalTextApi::class)
+private fun DrawScope.drawFinger(
+    textMeasurer: TextMeasurer,
+    finger: Int,
+    hand: Hand?,
+    keyColor: Color,
+    centerX: Float,
+    centerY: Float,
+    radius: Float,
+) {
+    val leftHand = hand == Hand.LEFT
+    drawCircle(
+        color = if (leftHand) Color(0xFF241F30) else Color.White,
+        radius = radius,
+        center = Offset(centerX, centerY),
+    )
+    drawCircle(
+        color = Color.White,
+        radius = radius,
+        center = Offset(centerX, centerY),
+        style = Stroke(width = 1.4f * density),
+    )
+    drawKeyLabel(
+        textMeasurer,
+        finger.toString(),
+        if (leftHand) Color.White else keyColor,
+        centerX = centerX,
+        baseline = centerY + radius * 0.58f,
+        fontSizePx = radius * 1.25f,
+    )
 }

@@ -81,7 +81,10 @@ fun ChordRow(
             ChordKeyboard(
                 chord = chord,
                 height = 74.dp,
+                // The note names do not fit at this size, but the finger numbers do, and
+                // they are the part that is not already written in the row above.
                 showLabels = false,
+                showFingers = true,
                 minOctaves = 2,
             )
         }

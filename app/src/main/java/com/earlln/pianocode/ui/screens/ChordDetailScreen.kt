@@ -1,6 +1,7 @@
 package com.earlln.pianocode.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.earlln.pianocode.music.Chord
@@ -112,7 +114,7 @@ fun ChordDetailScreen(
             Column(Modifier.padding(horizontal = 16.dp)) {
                 SectionHeader(
                     title = "건반 위치",
-                    subtitle = chord.positionLabel(inversion),
+                    subtitle = "${chord.positionLabel(inversion)} · 숫자는 손가락 (1=엄지)",
                 )
                 Spacer(Modifier.height(12.dp))
                 ChordKeyboard(
@@ -121,7 +123,40 @@ fun ChordDetailScreen(
                     startOctave = 3,
                     height = 150.dp,
                     showLabels = true,
+                    showFingers = true,
                     minOctaves = 2,
+                    // Swiping the keyboard walks the inversions. The chips below do the
+                    // same, but a hand already on the picture should not have to leave it
+                    // to see the next shape.
+                    modifier = Modifier.pointerInput(chord.symbol, chord.positionCount) {
+                        var travelled = 0f
+                        detectHorizontalDragGestures(
+                            onDragEnd = { travelled = 0f },
+                            onDragCancel = { travelled = 0f },
+                        ) { change, amount ->
+                            change.consume()
+                            travelled += amount
+                            val step = size.width / 4f
+                            // One inversion per quarter-width of travel, so a long drag
+                            // walks several rather than snapping back to one.
+                            while (travelled <= -step) {
+                                travelled += step
+                                inversion = (inversion + 1) % chord.positionCount
+                            }
+                            while (travelled >= step) {
+                                travelled -= step
+                                inversion =
+                                    (inversion - 1 + chord.positionCount) % chord.positionCount
+                            }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "건반을 좌우로 밀면 자리바꿈이 넘어갑니다. " +
+                        "왼손이 짚는 자리는 어두운 동그라미입니다.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(10.dp))
                 KeyboardLegend(
