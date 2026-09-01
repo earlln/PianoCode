@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.PhotoFilter
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.earlln.pianocode.music.Note
 
@@ -20,6 +21,7 @@ enum class Destination(
     CHORDS("chords", "코드 목록", "기본 코드와 모든 변화 코드", Icons.Filled.LibraryMusic),
     SCALES("scales", "스케일 & 다이아토닉", "조성별 구성음과 어울리는 코드", Icons.Filled.GraphicEq),
     CONVERTER("converter", "악보 코드 변환", "악보 사진의 코드를 원하는 스케일로", Icons.Filled.PhotoFilter),
+    SETTINGS("settings", "설정", "건반 그림과 손가락 표시", Icons.Filled.Tune),
     ABOUT("about", "정보", "버전과 사용법", Icons.Filled.Info),
 }
 

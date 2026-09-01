@@ -1,7 +1,6 @@
 package com.earlln.pianocode.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -32,7 +31,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.earlln.pianocode.music.Chord
@@ -41,7 +39,9 @@ import com.earlln.pianocode.music.ChordQuality
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.music.Note
 import com.earlln.pianocode.music.Transposer
+import com.earlln.pianocode.settings.KeyboardSettings
 import com.earlln.pianocode.ui.components.ChordKeyboard
+import com.earlln.pianocode.ui.components.swipeInversions
 import com.earlln.pianocode.ui.components.ChordRow
 import com.earlln.pianocode.ui.components.KeyRole
 import com.earlln.pianocode.ui.components.KeyboardLegend
@@ -114,49 +114,34 @@ fun ChordDetailScreen(
             Column(Modifier.padding(horizontal = 16.dp)) {
                 SectionHeader(
                     title = "건반 위치",
-                    subtitle = "${chord.positionLabel(inversion)} · 숫자는 손가락 (1=엄지)",
+                    subtitle = chord.positionLabel(inversion) +
+                        if (KeyboardSettings.prefs.showFingers) " · 숫자는 손가락 (1=엄지)" else "",
                 )
                 Spacer(Modifier.height(12.dp))
+                val prefs = KeyboardSettings.prefs
                 ChordKeyboard(
                     chord = chord,
                     inversion = inversion,
                     startOctave = 3,
-                    height = 178.dp,
-                    showLabels = true,
-                    showFingers = true,
-                    showHand = true,
+                    height = if (prefs.showHand) 178.dp else 150.dp,
+                    showLabels = prefs.showNoteNames,
+                    showFingers = prefs.showFingers,
+                    showHand = prefs.showHand,
+                    handOpacity = prefs.handOpacity,
                     minOctaves = 2,
-                    // Swiping the keyboard walks the inversions. The chips below do the
-                    // same, but a hand already on the picture should not have to leave it
-                    // to see the next shape.
-                    modifier = Modifier.pointerInput(chord.symbol, chord.positionCount) {
-                        var travelled = 0f
-                        detectHorizontalDragGestures(
-                            onDragEnd = { travelled = 0f },
-                            onDragCancel = { travelled = 0f },
-                        ) { change, amount ->
-                            change.consume()
-                            travelled += amount
-                            val step = size.width / 4f
-                            // One inversion per quarter-width of travel, so a long drag
-                            // walks several rather than snapping back to one.
-                            while (travelled <= -step) {
-                                travelled += step
-                                inversion = (inversion + 1) % chord.positionCount
-                            }
-                            while (travelled >= step) {
-                                travelled -= step
-                                inversion =
-                                    (inversion - 1 + chord.positionCount) % chord.positionCount
-                            }
-                        }
+                    modifier = if (prefs.swipeToInvert) {
+                        Modifier.swipeInversions(chord.positionCount, inversion) { inversion = it }
+                    } else {
+                        Modifier
                     },
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "건반을 좌우로 밀면 자리바꿈이 넘어갑니다. " +
-                        "손 모양은 손가락이 어디로 뻗는지 보여 주는 실루엣이고, " +
-                        "왼손이 짚는 자리는 어두운 동그라미입니다.",
+                    buildString {
+                        if (prefs.swipeToInvert) append("건반을 좌우로 밀면 자리바꿈이 넘어갑니다. ")
+                        if (prefs.showHand) append("손 모양은 손가락이 뻗는 방향을 보여 주는 실루엣입니다. ")
+                        if (prefs.showFingers) append("왼손이 짚는 자리는 어두운 동그라미입니다.")
+                    }.ifBlank { "표시 옵션은 설정 화면에서 바꿀 수 있습니다." },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

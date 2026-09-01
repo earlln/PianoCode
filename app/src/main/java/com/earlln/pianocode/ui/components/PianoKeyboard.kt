@@ -1,6 +1,7 @@
 package com.earlln.pianocode.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -72,6 +74,7 @@ fun PianoKeyboard(
     showLabels: Boolean = true,
     showOctaveMarkers: Boolean = true,
     showHand: Boolean = false,
+    handOpacity: Float = 0.55f,
     minOctaves: Int = 2,
 ) {
     val textMeasurer = rememberTextMeasurer()
@@ -88,6 +91,7 @@ fun PianoKeyboard(
                 showLabels = showLabels,
                 showOctaveMarkers = showOctaveMarkers,
                 showHand = showHand,
+                handOpacity = handOpacity,
             )
         }
     }
@@ -104,6 +108,7 @@ fun ChordKeyboard(
     showLabels: Boolean = true,
     showFingers: Boolean = false,
     showHand: Boolean = false,
+    handOpacity: Float = 0.55f,
     minOctaves: Int = 2,
 ) {
     val highlights = remember(chord, inversion, startOctave, showFingers) {
@@ -115,6 +120,7 @@ fun ChordKeyboard(
         height = height,
         showLabels = showLabels,
         showHand = showHand && showFingers,
+        handOpacity = handOpacity,
         minOctaves = minOctaves,
     )
 }
@@ -170,6 +176,7 @@ private fun DrawScope.drawKeyboard(
     showLabels: Boolean,
     showOctaveMarkers: Boolean,
     showHand: Boolean,
+    handOpacity: Float,
 ) {
     val whiteCount = octaves * 7
     if (whiteCount == 0) return
@@ -276,7 +283,7 @@ private fun DrawScope.drawKeyboard(
     // --- The hand, then the numbers on top of it --------------------------
     if (showHand) {
         fingertips.groupBy { it.hand }.forEach { (hand, spots) ->
-            drawHand(spots, hand, whiteWidth)
+            drawHand(spots, hand, whiteWidth, handOpacity)
         }
     }
     fingertips.forEach { tip ->
@@ -310,7 +317,12 @@ private data class Fingertip(
  * The knuckles sit at the back of the keyboard and the fingers reach towards the player,
  * which is how the hand meets the keys from where the reader is sitting.
  */
-private fun DrawScope.drawHand(spots: List<Fingertip>, hand: Hand, whiteWidth: Float) {
+private fun DrawScope.drawHand(
+    spots: List<Fingertip>,
+    hand: Hand,
+    whiteWidth: Float,
+    opacity: Float,
+) {
     if (spots.size < 2) return
     val ordered = spots.sortedBy { it.center.x }
     val skin = if (hand == Hand.LEFT) Color(0xFF3B3350) else Color(0xFF2E2740)
@@ -336,7 +348,7 @@ private fun DrawScope.drawHand(spots: List<Fingertip>, hand: Hand, whiteWidth: F
             Offset(spot.center.x + (palmCentre - spot.center.x) * 0.35f, knuckleY)
         }
         drawLine(
-            color = skin.copy(alpha = 0.55f),
+            color = skin.copy(alpha = opacity),
             start = start,
             end = spot.center,
             strokeWidth = if (fromThumb) fingerWidth * 1.35f else fingerWidth,
@@ -350,7 +362,7 @@ private fun DrawScope.drawHand(spots: List<Fingertip>, hand: Hand, whiteWidth: F
         val left = knuckles.min() + (palmCentre - knuckles.min()) * 0.35f
         val right = knuckles.max() + (palmCentre - knuckles.max()) * 0.35f
         drawRoundRect(
-            color = skin.copy(alpha = 0.45f),
+            color = skin.copy(alpha = opacity * 0.82f),
             topLeft = Offset(left - fingerWidth * 0.7f, size.height * 0.02f),
             size = Size(
                 (right - left) + fingerWidth * 1.4f,
@@ -362,7 +374,7 @@ private fun DrawScope.drawHand(spots: List<Fingertip>, hand: Hand, whiteWidth: F
     if (thumb != null && knuckles.isNotEmpty()) {
         // A short web from the palm down to where the thumb comes in.
         drawLine(
-            color = skin.copy(alpha = 0.45f),
+            color = skin.copy(alpha = opacity * 0.82f),
             start = Offset(palmCentre, knuckleY),
             end = thumbAnchor,
             strokeWidth = fingerWidth * 1.6f,
@@ -451,4 +463,43 @@ private fun DrawScope.drawFinger(
         baseline = centerY + radius * 0.58f,
         fontSizePx = radius * 1.25f,
     )
+}
+
+/**
+ * Walks the inversions as the keyboard is dragged sideways.
+ *
+ * One step per quarter of the width, so a long drag walks several positions instead of
+ * snapping back to one, and the gesture is claimed only once it is clearly horizontal —
+ * the pictures sit in vertically scrolling lists, which must keep working over them.
+ */
+fun Modifier.swipeInversions(
+    positionCount: Int,
+    inversion: Int,
+    onInversion: (Int) -> Unit,
+): Modifier = if (positionCount <= 1) {
+    this
+} else {
+    this.pointerInput(positionCount) {
+        var travelled = 0f
+        var position = inversion
+        detectHorizontalDragGestures(
+            onDragStart = { travelled = 0f },
+            onDragEnd = { travelled = 0f },
+            onDragCancel = { travelled = 0f },
+        ) { change, amount ->
+            change.consume()
+            travelled += amount
+            val step = size.width / 4f
+            while (travelled <= -step) {
+                travelled += step
+                position = (position + 1) % positionCount
+                onInversion(position)
+            }
+            while (travelled >= step) {
+                travelled -= step
+                position = (position - 1 + positionCount) % positionCount
+                onInversion(position)
+            }
+        }
+    }
 }

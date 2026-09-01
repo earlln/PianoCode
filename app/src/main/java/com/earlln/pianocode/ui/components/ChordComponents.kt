@@ -21,6 +21,10 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.earlln.pianocode.music.Chord
 import com.earlln.pianocode.music.Note
+import com.earlln.pianocode.settings.KeyboardSettings
 
 /** A row in the chord list: the symbol, what it is, and the keyboard shape beside it. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,6 +44,7 @@ fun ChordRow(
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
 ) {
+    var inversion by remember(chord.symbol) { mutableIntStateOf(0) }
     Card(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -78,15 +84,35 @@ fun ChordRow(
                 }
             }
             Spacer(Modifier.height(10.dp))
+            val prefs = KeyboardSettings.prefs
+            val handHere = prefs.showHand && prefs.handInList
             ChordKeyboard(
                 chord = chord,
-                height = 74.dp,
-                // The note names do not fit at this size, but the finger numbers do, and
-                // they are the part that is not already written in the row above.
+                inversion = inversion,
+                // The hand needs headroom above the keys that a row-sized picture does not
+                // otherwise have.
+                height = if (handHere) 104.dp else 74.dp,
+                // Note names do not fit at this size, which is why the rows never had them,
+                // but the finger numbers do — and the names are in the line above anyway.
                 showLabels = false,
-                showFingers = true,
+                showFingers = prefs.showFingers,
+                showHand = handHere,
+                handOpacity = prefs.handOpacity,
                 minOctaves = 2,
+                modifier = if (prefs.swipeToInvert) {
+                    Modifier.swipeInversions(chord.positionCount, inversion) { inversion = it }
+                } else {
+                    Modifier
+                },
             )
+            if (prefs.swipeToInvert && chord.positionCount > 1 && inversion != 0) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    chord.positionLabel(inversion),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
