@@ -15,7 +15,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.ExperimentalTextApi
@@ -339,8 +338,9 @@ private data class Fingertip(
  * keys, and the fingers reach away towards the back — the way their own hand will look when
  * they put it down.
  *
- * Palm and digits are unioned into one outline before anything is drawn, so the hand has a
- * single edge around it rather than seams where a finger meets the palm.
+ * It is drawn as one continuous outline: up the side of the palm, around each finger in
+ * turn, dipping into the web between them and back out, and down to the wrist. Nothing is
+ * drawn inside that edge, so the hand reads as a single stroke rather than a pile of parts.
  */
 private fun DrawScope.drawHand(
     spots: List<Fingertip>,
@@ -356,11 +356,11 @@ private fun DrawScope.drawHand(
 
     val knuckleY = size.height * 0.88f
     // The wrist runs off the bottom of the picture, the way a hand does off the near edge
-    // of a real keyboard.
-    val wristY = size.height * 1.16f
+    // of a real keyboard, so the hand never has to be closed off with a visible edge.
+    val wristY = size.height * 1.18f
     val palmCentre = longFingers.map { it.center.x }.average().toFloat()
     val baseWidth = (whiteWidth * 0.54f).coerceAtLeast(5f * density)
-    val tipWidth = baseWidth * 0.80f
+    val tipWidth = baseWidth * 0.82f
 
     /** Where a finger leaves the hand: pulled towards the middle, and arched a little. */
     fun knuckleOf(spot: Fingertip): Offset {
@@ -369,122 +369,131 @@ private fun DrawScope.drawHand(
         return Offset(x, knuckleY + fromCentre * fromCentre * baseWidth * 0.55f)
     }
 
-    val thumbAnchor = thumb?.let {
-        Offset(
-            palmCentre + if (hand == Hand.RIGHT) -baseWidth * 0.75f else baseWidth * 0.75f,
-            wristY - baseWidth * 2.1f,
-        )
-    }
-
-    // --- Palm ---------------------------------------------------------------
-    val leftBase = knuckleOf(longFingers.first())
-    val rightBase = knuckleOf(longFingers.last())
-    val palm = Path().apply {
-        moveTo(leftBase.x - baseWidth * 0.55f, leftBase.y + baseWidth * 0.1f)
-        lineTo(rightBase.x + baseWidth * 0.55f, rightBase.y + baseWidth * 0.1f)
-        // The heel of the hand rounds out and then narrows towards the wrist.
-        quadraticBezierTo(
-            rightBase.x + baseWidth * 0.85f, wristY - baseWidth * 1.6f,
-            palmCentre + baseWidth * 1.05f, wristY,
-        )
-        lineTo(palmCentre - baseWidth * 1.05f, wristY)
-        quadraticBezierTo(
-            leftBase.x - baseWidth * 0.85f, wristY - baseWidth * 1.6f,
-            leftBase.x - baseWidth * 0.55f, leftBase.y + baseWidth * 0.1f,
-        )
-        close()
-    }
-
-    // --- One silhouette, so no seam shows where a finger joins the palm -----
-    var outline = palm
-    val digits = buildList {
-        thumbAnchor?.let { anchor ->
-            add(digitPath(anchor, thumb!!.center, baseWidth * 1.2f, tipWidth * 1.15f))
-        }
-        longFingers.forEach { add(digitPath(knuckleOf(it), it.center, baseWidth, tipWidth)) }
-    }
-    digits.forEach { digit ->
-        outline = Path().also { it.op(outline, digit, PathOperation.Union) }
-    }
-
-    drawPath(outline, SKIN.copy(alpha = opacity))
-    drawPath(
-        outline,
-        SKIN_EDGE.copy(alpha = opacity),
-        style = Stroke(width = 1.8f * density),
+    val digits = longFingers.map { Digit(knuckleOf(it), it.center, baseWidth / 2f, tipWidth / 2f) }
+    val outline = handOutline(
+        digits = digits,
+        wristLeft = Offset(palmCentre - baseWidth * 1.15f, wristY),
+        wristRight = Offset(palmCentre + baseWidth * 1.15f, wristY),
+        web = baseWidth * 0.55f,
     )
 
-    // --- Nails, which is most of what makes it read as a hand ---------------
-    val nailSpots = buildList {
-        thumbAnchor?.let { add(Triple(it, thumb!!.center, tipWidth * 1.15f)) }
-        longFingers.forEach { add(Triple(knuckleOf(it), it.center, tipWidth)) }
-    }
-    for ((base, tip, width) in nailSpots) {
-        val dx = tip.x - base.x
-        val dy = tip.y - base.y
-        val length = kotlin.math.sqrt(dx * dx + dy * dy)
-        if (length < 1f) continue
-        val nailWidth = width * 0.62f
-        val nailHeight = width * 0.78f
-        val centre = Offset(tip.x - dx / length * width * 0.16f, tip.y - dy / length * width * 0.16f)
-        val degrees = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
-        rotate(degrees = degrees, pivot = centre) {
-            val topLeft = Offset(centre.x - nailWidth / 2f, centre.y - nailHeight / 2f)
-            val nailSize = Size(nailWidth, nailHeight)
-            drawOval(NAIL.copy(alpha = opacity), topLeft, nailSize)
-            drawOval(
-                SKIN_EDGE.copy(alpha = opacity * 0.75f),
-                topLeft,
-                nailSize,
-                style = Stroke(width = 1.1f * density),
-            )
-        }
-    }
+    // The thumb comes off the side of the hand rather than the knuckle line, so it is
+    // merged in rather than swept through: taking it in x order would fold the outline back
+    // on itself. Merging keeps one edge round the pair with no seam where they meet.
+    val whole = thumb?.let { spot ->
+        val anchor = Offset(
+            palmCentre + if (hand == Hand.RIGHT) -baseWidth * 0.55f else baseWidth * 0.55f,
+            wristY - baseWidth * 2.2f,
+        )
+        val thumbPath = Digit(anchor, spot.center, baseWidth * 0.62f, tipWidth * 0.58f).path()
+        Path().also { it.op(outline, thumbPath, PathOperation.Union) }
+    } ?: outline
+
+    drawPath(whole, SKIN.copy(alpha = opacity))
+    drawPath(whole, SKIN_EDGE.copy(alpha = opacity), style = Stroke(width = 1.8f * density))
 }
 
 /**
- * One finger: tapered from root to tip and rounded off at the end.
+ * The hand as a single closed curve.
  *
- * The taper is what makes it read as a finger — a bar of even thickness reads as wire no
- * matter how it is coloured.
+ * Sweeping left to right and curving into the web between neighbours is what keeps it
+ * smooth: joining finger to finger with straight lines leaves a sharp V at every gap, which
+ * is the one thing that stops a drawing reading as a hand.
  */
-private fun digitPath(base: Offset, tip: Offset, baseWidth: Float, tipWidth: Float): Path {
-    val dx = tip.x - base.x
-    val dy = tip.y - base.y
-    val length = kotlin.math.sqrt(dx * dx + dy * dy)
-    if (length < 0.5f) return Path()
-    val ux = dx / length
-    val uy = dy / length
-    // Perpendicular to the finger, for its two sides.
-    val px = -uy
-    val py = ux
-    val baseHalf = baseWidth / 2f
-    val tipHalf = tipWidth / 2f
-    // How far past the key the fingertip rounds off. 4/3 of the radius puts the curve very
-    // near a true semicircle.
-    val overX = ux * tipHalf * 1.33f
-    val overY = uy * tipHalf * 1.33f
+private fun handOutline(
+    digits: List<Digit>,
+    wristLeft: Offset,
+    wristRight: Offset,
+    web: Float,
+): Path = Path().apply {
+    val first = digits.first()
+    val last = digits.last()
 
-    return Path().apply {
-        moveTo(base.x + px * baseHalf, base.y + py * baseHalf)
-        lineTo(tip.x + px * tipHalf, tip.y + py * tipHalf)
+    moveTo(wristLeft.x, wristLeft.y)
+    // Up the outside of the palm, bulging out a little at the heel.
+    quadraticBezierTo(
+        wristLeft.x - web * 0.35f, (wristLeft.y + first.leftBase.y) / 2f,
+        first.leftBase.x, first.leftBase.y,
+    )
+
+    digits.forEachIndexed { index, digit ->
+        digit.appendTo(this)
+        if (index < digits.lastIndex) {
+            val next = digits[index + 1]
+            // Into the web and back out: the dip is what rounds off the gap.
+            quadraticBezierTo(
+                (digit.rightBase.x + next.leftBase.x) / 2f,
+                maxOf(digit.rightBase.y, next.leftBase.y) + web,
+                next.leftBase.x, next.leftBase.y,
+            )
+        }
+    }
+
+    quadraticBezierTo(
+        wristRight.x + web * 0.35f, (wristRight.y + last.rightBase.y) / 2f,
+        wristRight.x, wristRight.y,
+    )
+    // Closed below the picture, so this edge is never seen.
+    lineTo(wristLeft.x, wristLeft.y)
+    close()
+}
+
+/** One digit's geometry: where its sides sit at the base, at the tip, and round the end. */
+private class Digit(base: Offset, tip: Offset, baseHalf: Float, tipHalf: Float) {
+    private val dx = tip.x - base.x
+    private val dy = tip.y - base.y
+    private val length = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(0.001f)
+    private val ux = dx / length
+    private val uy = dy / length
+
+    // The sides, found by stepping perpendicular to the finger from base and tip.
+    private val sideA = Offset(base.x - uy * baseHalf, base.y + ux * baseHalf)
+    private val sideB = Offset(base.x + uy * baseHalf, base.y - ux * baseHalf)
+    private val capA = Offset(tip.x - uy * tipHalf, tip.y + ux * tipHalf)
+    private val capB = Offset(tip.x + uy * tipHalf, tip.y - ux * tipHalf)
+    private val flip = sideA.x <= sideB.x
+
+    val leftBase = if (flip) sideA else sideB
+    val rightBase = if (flip) sideB else sideA
+    private val leftTip = if (flip) capA else capB
+    private val rightTip = if (flip) capB else capA
+    // Four thirds of the radius puts a quadratic pair within a hair of a true semicircle.
+    private val overX = ux * tipHalf * 1.33f
+    private val overY = uy * tipHalf * 1.33f
+    private val end = tip
+    private val bow = baseHalf * 0.16f
+
+    /** Up one side, round the end, and back down the other. */
+    fun appendTo(path: Path) = with(path) {
         quadraticBezierTo(
-            tip.x + px * tipHalf + overX, tip.y + py * tipHalf + overY,
-            tip.x + overX, tip.y + overY,
+            (leftBase.x + leftTip.x) / 2f - bow, (leftBase.y + leftTip.y) / 2f,
+            leftTip.x, leftTip.y,
         )
         quadraticBezierTo(
-            tip.x - px * tipHalf + overX, tip.y - py * tipHalf + overY,
-            tip.x - px * tipHalf, tip.y - py * tipHalf,
+            leftTip.x + overX, leftTip.y + overY,
+            end.x + overX, end.y + overY,
         )
-        lineTo(base.x - px * baseHalf, base.y - py * baseHalf)
+        quadraticBezierTo(
+            rightTip.x + overX, rightTip.y + overY,
+            rightTip.x, rightTip.y,
+        )
+        quadraticBezierTo(
+            (rightBase.x + rightTip.x) / 2f + bow, (rightBase.y + rightTip.y) / 2f,
+            rightBase.x, rightBase.y,
+        )
+    }
+
+    /** The same shape on its own, for a digit that is merged in rather than swept through. */
+    fun path(): Path = Path().apply {
+        moveTo(leftBase.x, leftBase.y)
+        appendTo(this)
         close()
     }
 }
 
-/** Cartoon hand colouring: pale fill, dark edge, a slightly warmer nail. */
+/** Cartoon hand colouring: a pale fill and one dark edge around the whole shape. */
 private val SKIN = Color(0xFFFBE6CE)
 private val SKIN_EDGE = Color(0xFF2B2118)
-private val NAIL = Color(0xFFF6D2B6)
 
 /** Fingering numbers are written in red, the way they are printed on a score. */
 private val FINGER_RED = Color(0xFFD32F2F)
