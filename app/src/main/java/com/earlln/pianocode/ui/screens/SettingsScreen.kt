@@ -132,7 +132,7 @@ fun SettingsScreen(
                             )
                         }
                         Text(
-                            "옅게 두면 건반이 그대로 비쳐 보이고, 진하게 두면 손 모양이 또렷합니다.",
+                            "옅게 두면 건반이 비쳐 보이고, 진하게 두면 손이 또렷합니다.",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -141,7 +141,7 @@ fun SettingsScreen(
                             onValueChange = { value ->
                                 KeyboardSettings.update { it.copy(handOpacity = value) }
                             },
-                            valueRange = 0.15f..0.9f,
+                            valueRange = 0.35f..1f,
                         )
                     }
                 }

@@ -14,7 +14,7 @@ data class KeyboardPrefs(
     /** The hand silhouette reaching for those keys. */
     val showHand: Boolean = true,
     /** How solid that silhouette is. Low enough and the keys read straight through it. */
-    val handOpacity: Float = 0.55f,
+    val handOpacity: Float = 0.92f,
     /** Note names written on the keys, where the picture is big enough to hold them. */
     val showNoteNames: Boolean = true,
     /** Dragging a keyboard sideways walks the inversions. */
