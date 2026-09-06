@@ -73,6 +73,59 @@ class SheetCanvas(val width: Int, val height: Int, private val paper: Int = 250)
         for (line in 0 until 5) hLine(left, right, topY + line * (space + thickness), thickness)
     }
 
+    /**
+     * A sharp: two uprights with two bars crossing well past them.
+     *
+     * [cy] is the height the sign stands at, which is the height of the note it belongs to.
+     */
+    fun sharp(cx: Double, cy: Double, pitch: Double) {
+        val half = pitch * 0.95
+        val gap = pitch * 0.30
+        vLine((cx - gap).toInt(), (cy - half).toInt(), (cy + half * 0.75).toInt(), thickness = 2)
+        vLine((cx + gap).toInt(), (cy - half * 0.75).toInt(), (cy + half).toInt(), thickness = 2)
+        val reach = pitch * 0.40
+        hLine((cx - reach).toInt(), (cx + reach).toInt(), (cy - pitch * 0.30).toInt(), thickness = 3)
+        hLine((cx - reach).toInt(), (cx + reach).toInt(), (cy + pitch * 0.24).toInt(), thickness = 3)
+    }
+
+    /** A flat: a thin upright with a bowl hung off the bottom of it. */
+    fun flat(cx: Double, cy: Double, pitch: Double) {
+        vLine((cx - pitch * 0.22).toInt(), (cy - pitch * 1.25).toInt(), (cy + pitch * 0.55).toInt(), thickness = 2)
+        head(cx + pitch * 0.06, cy + pitch * 0.22, pitch * 0.36, pitch * 0.34, filled = true, tiltDegrees = 0.0)
+    }
+
+    /** A natural: the same two bars, but the uprights do not reach past them. */
+    fun natural(cx: Double, cy: Double, pitch: Double) {
+        val half = pitch * 0.95
+        val gap = pitch * 0.22
+        vLine((cx - gap).toInt(), (cy - half).toInt(), (cy + pitch * 0.30).toInt(), thickness = 2)
+        vLine((cx + gap).toInt(), (cy - pitch * 0.30).toInt(), (cy + half).toInt(), thickness = 2)
+        hLine((cx - gap).toInt(), (cx + gap).toInt(), (cy - pitch * 0.28).toInt(), thickness = 3)
+        hLine((cx - gap).toInt(), (cx + gap).toInt(), (cy + pitch * 0.22).toInt(), thickness = 3)
+    }
+
+    /**
+     * A treble clef, drawn only as tall as the real one is.
+     *
+     * The reader tells the clefs apart by height alone, so the curls are beside the point;
+     * what has to be right is that this reaches above and below the staff.
+     */
+    fun trebleClef(cx: Double, staffTop: Double, staffBottom: Double, pitch: Double) {
+        val top = staffTop - pitch * 1.2
+        val bottom = staffBottom + pitch * 1.3
+        vLine(cx.toInt(), top.toInt(), bottom.toInt(), thickness = 3)
+        head(cx, staffBottom - pitch * 1.0, pitch * 0.85, pitch * 0.85, filled = false, tiltDegrees = 0.0)
+        head(cx, top + pitch * 0.8, pitch * 0.55, pitch * 0.8, filled = false, tiltDegrees = 0.0)
+    }
+
+    /** A bass clef, which fits inside the staff and so is much the shorter of the two. */
+    fun bassClef(cx: Double, staffTop: Double, pitch: Double) {
+        head(cx, staffTop + pitch * 0.9, pitch * 0.9, pitch * 0.9, filled = true, tiltDegrees = 0.0)
+        hLine(cx.toInt(), (cx + pitch * 0.9).toInt(), (staffTop + pitch * 0.2).toInt(), thickness = 3)
+        box((cx + pitch * 1.2).toInt(), (staffTop + pitch * 0.5).toInt(), (cx + pitch * 1.5).toInt(), (staffTop + pitch * 0.8).toInt())
+        box((cx + pitch * 1.2).toInt(), (staffTop + pitch * 1.3).toInt(), (cx + pitch * 1.5).toInt(), (staffTop + pitch * 1.6).toInt())
+    }
+
     /** Dims one region, the way a phone's own shadow falls across a page. */
     fun shade(x0: Int, y0: Int, x1: Int, y1: Int, by: Int) {
         for (y in y0..y1) {

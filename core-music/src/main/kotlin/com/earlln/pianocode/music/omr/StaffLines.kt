@@ -16,9 +16,14 @@ object StaffLines {
 
     fun remove(image: MonoImage, staves: List<Staff>, scale: PageScale): MonoImage {
         val canvas = image.mutableCopy()
-        // A run this long or shorter is the line and nothing else. Two extra pixels of
+        // A run this long or shorter is the line and nothing else; one extra pixel of
         // slack absorbs a line that photographed a little fat or sits between two rows.
-        val lineOnly = scale.lineThickness + 2
+        val lineOnly = scale.lineThickness + 1
+        // A little longer than that and something thin is resting on the line — the top of
+        // an open head's ring, a slur, a tie. Rubbing out the whole run there takes the
+        // note with the line and opens the head's hole, so only the line's own rows go.
+        val lineWithSomethingOnIt = scale.lineThickness + 4
+        val halfBand = scale.lineThickness / 2
 
         for (staff in staves) {
             for (lineCentre in staff.lineY) {
@@ -33,8 +38,13 @@ object StaffLines {
                     while (canvas.isInk(x, top - 1)) top--
                     var bottom = top
                     while (canvas.isInk(x, bottom + 1)) bottom++
-                    if (bottom - top + 1 <= lineOnly) {
+                    val run = bottom - top + 1
+                    if (run <= lineOnly) {
                         for (y in top..bottom) canvas.erase(x, y)
+                    } else if (run <= lineWithSomethingOnIt) {
+                        for (y in (centre - halfBand)..(centre + halfBand)) {
+                            if (y in top..bottom) canvas.erase(x, y)
+                        }
                     }
                 }
             }

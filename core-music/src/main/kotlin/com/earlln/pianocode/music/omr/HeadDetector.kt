@@ -38,6 +38,13 @@ object HeadDetector {
         staff: Staff,
         topStep: Int = 14,
         bottomStep: Int = -6,
+        /**
+         * Where the music starts. A treble clef is a loop with a hole in it and reads as
+         * an open head; the sharps of a key signature are head-sized too. Neither is a
+         * note, and both stand in a part of the staff no note is ever written in, so the
+         * search simply begins after them.
+         */
+        fromX: Int = staff.left,
     ): List<NoteHead> {
         val sums = InkSums(inkWithoutStaffLines)
         val space = staff.space
@@ -53,6 +60,8 @@ object HeadDetector {
         val wideX = (space * 1.15).roundToInt().coerceAtLeast(rx + 2)
         val flankW = (space * 0.20).roundToInt().coerceAtLeast(1)
         val flankH = (space * 0.18).roundToInt().coerceAtLeast(1)
+        val holeW = (space * 0.60).roundToInt().coerceAtLeast(2)
+        val holeH = (space * 0.50).roundToInt().coerceAtLeast(2)
 
         val yTop = staff.yOfStep(topStep).roundToInt().coerceAtLeast(0)
         val yBottom = staff.yOfStep(bottomStep).roundToInt()
@@ -60,7 +69,7 @@ object HeadDetector {
 
         val found = mutableListOf<NoteHead>()
         for (y in yTop..yBottom) {
-            for (x in staff.left..staff.right) {
+            for (x in fromX.coerceAtLeast(staff.left)..staff.right) {
                 val core = sums.ratio(x - coreX, y - coreY, x + coreX, y + coreY)
                 val body = sums.ratio(x - rx, y - ry, x + rx, y + ry)
                 if (body < MIN_BODY) continue
@@ -99,6 +108,11 @@ object HeadDetector {
                 // and passes every test so far, and gives itself away by running the whole
                 // length of the beam where a note's hole is barely a staff space across.
                 if (whiteRowRun(inkWithoutStaffLines, x, y) > space * MAX_HOLE_WIDTH) continue
+                // Everything above can be satisfied by white that merely happens to have
+                // ink on four sides of it — between a sharp's upright and the note it
+                // belongs to, or between two beams. A note's hole is genuinely closed, so
+                // the last test is to fill it and see whether it stays put.
+                if (!holeIsClosed(inkWithoutStaffLines, x, y, holeW, holeH)) continue
                 found += NoteHead(x.toDouble(), y.toDouble(), 0, false, (left + right) / 2)
             }
         }
@@ -113,6 +127,40 @@ object HeadDetector {
         var bottom = y
         while (image.isInk(x, bottom + 1)) bottom++
         return bottom - top + 1
+    }
+
+    /**
+     * Fills the paper around [x], [y] and reports whether it is walled in.
+     *
+     * The fill is given a box the size a note's hole can be and no more; the moment it
+     * reaches the edge of that box the white is part of the page, not part of a note, and
+     * the answer is no. Ink is the wall, so this is the same question a person answers by
+     * looking — is that a hole in something, or a gap between things?
+     */
+    private fun holeIsClosed(image: MonoImage, x: Int, y: Int, halfW: Int, halfH: Int): Boolean {
+        val left = x - halfW
+        val right = x + halfW
+        val top = y - halfH
+        val bottom = y + halfH
+        val width = right - left + 1
+        val seen = BooleanArray(width * (bottom - top + 1))
+        val stack = ArrayDeque<Int>()
+        stack.addLast(x shl 16 or (y and 0xFFFF))
+        while (stack.isNotEmpty()) {
+            val packed = stack.removeLast()
+            val px = packed shr 16
+            val py = packed and 0xFFFF
+            if (px < left || px > right || py < top || py > bottom) return false
+            val index = (py - top) * width + (px - left)
+            if (seen[index]) continue
+            seen[index] = true
+            if (image.isInk(px, py)) continue
+            stack.addLast((px + 1) shl 16 or (py and 0xFFFF))
+            stack.addLast((px - 1) shl 16 or (py and 0xFFFF))
+            stack.addLast(px shl 16 or ((py + 1) and 0xFFFF))
+            stack.addLast(px shl 16 or ((py - 1) and 0xFFFF))
+        }
+        return true
     }
 
     /** How far the paper runs uninterrupted across this row, counting [x] itself. */
