@@ -68,55 +68,103 @@ object HeadDetector {
             .coerceAtMost(inkWithoutStaffLines.height - 1)
 
         val found = mutableListOf<NoteHead>()
+        val left = fromX.coerceAtLeast(staff.left)
         for (y in yTop..yBottom) {
-            for (x in fromX.coerceAtLeast(staff.left)..staff.right) {
-                val core = sums.ratio(x - coreX, y - coreY, x + coreX, y + coreY)
-                val body = sums.ratio(x - rx, y - ry, x + rx, y + ry)
-                if (body < MIN_BODY) continue
-                val wide = sums.ratio(x - wideX, y - coreY, x + wideX, y + coreY)
-                if (wide > MAX_WIDE) continue
-
-                val filled = core >= FILLED_CORE && body >= FILLED_BODY
-                if (filled) {
-                    // A beam is the one other solid, head-sized thing on a page, and near
-                    // its end it passes every test above. It gives itself away by being
-                    // thin: about half a staff space, where a head is a whole one. Measured
-                    // down the middle of the candidate, where a head is at its tallest and
-                    // no stem reaches.
-                    val tall = columnRun(inkWithoutStaffLines, x, y)
-                    if (tall < space * MIN_HEAD_HEIGHT || tall > space * MAX_HEAD_HEIGHT) continue
-                    // And a beam that has merged with a staff line is thick enough to pass
-                    // the height test, so measure the other way too: a head is about a
-                    // space and a third wide, a ledger line twice that, a beam far more.
-                    val long = rowRun(inkWithoutStaffLines, x, y)
-                    if (long > space * MAX_HEAD_WIDTH) continue
-                    found += NoteHead(x.toDouble(), y.toDouble(), 0, true, body)
-                    continue
+            var x = left
+            while (x <= staff.right) {
+                // A page of speckled ink can answer yes almost everywhere, and the pass
+                // that thins the answers out compares every one against every other. Two
+                // things keep that from turning a bad photograph into a frozen app: a
+                // found head steps the scan past its own width, and there is a ceiling.
+                if (found.size >= MAX_CANDIDATES) break
+                val hit = headAt(inkWithoutStaffLines, sums, x, y, space, Windows(
+                    rx, ry, coreX, coreY, wideX, flankW, flankH, holeW, holeH,
+                ))
+                if (hit == null) {
+                    x++
+                } else {
+                    found += hit
+                    x += rx
                 }
-                if (core > OPEN_CORE) continue
-                val left = sums.ratio(x - rx, y - coreY, x - rx + flankW, y + coreY)
-                val right = sums.ratio(x + rx - flankW, y - coreY, x + rx, y + coreY)
-                if (left < OPEN_FLANK || right < OPEN_FLANK) continue
-                // The hole has to be enclosed, not merely flanked. Without this, the edge
-                // of any horizontal bar reads as an open head: white above it, ink below,
-                // which looks the same as a ring when only the left and right are checked.
-                val above = sums.ratio(x - coreX, y - ry, x + coreX, y - ry + flankH)
-                val below = sums.ratio(x - coreX, y + ry - flankH, x + coreX, y + ry)
-                if (above < OPEN_ENCLOSE || below < OPEN_ENCLOSE) continue
-                // The ring has to close around the hole, not merely sit above and below
-                // it. The slot between two beams is bounded top and bottom by the beams
-                // and passes every test so far, and gives itself away by running the whole
-                // length of the beam where a note's hole is barely a staff space across.
-                if (whiteRowRun(inkWithoutStaffLines, x, y) > space * MAX_HOLE_WIDTH) continue
-                // Everything above can be satisfied by white that merely happens to have
-                // ink on four sides of it — between a sharp's upright and the note it
-                // belongs to, or between two beams. A note's hole is genuinely closed, so
-                // the last test is to fill it and see whether it stays put.
-                if (!holeIsClosed(inkWithoutStaffLines, x, y, holeW, holeH)) continue
-                found += NoteHead(x.toDouble(), y.toDouble(), 0, false, (left + right) / 2)
             }
+            if (found.size >= MAX_CANDIDATES) break
         }
         return suppress(found, staff)
+    }
+
+    private class Windows(
+        val rx: Int,
+        val ry: Int,
+        val coreX: Int,
+        val coreY: Int,
+        val wideX: Int,
+        val flankW: Int,
+        val flankH: Int,
+        val holeW: Int,
+        val holeH: Int,
+    )
+
+    /** The whole test, for one place on the page. */
+    private fun headAt(
+        image: MonoImage,
+        sums: InkSums,
+        x: Int,
+        y: Int,
+        space: Double,
+        w: Windows,
+    ): NoteHead? {
+        val rx = w.rx
+        val ry = w.ry
+        val coreX = w.coreX
+        val coreY = w.coreY
+        val wideX = w.wideX
+        val flankW = w.flankW
+        val flankH = w.flankH
+        val holeW = w.holeW
+        val holeH = w.holeH
+        val core = sums.ratio(x - coreX, y - coreY, x + coreX, y + coreY)
+        val body = sums.ratio(x - rx, y - ry, x + rx, y + ry)
+        if (body < MIN_BODY) return null
+        val wide = sums.ratio(x - wideX, y - coreY, x + wideX, y + coreY)
+        if (wide > MAX_WIDE) return null
+
+        val filled = core >= FILLED_CORE && body >= FILLED_BODY
+        if (filled) {
+            // A beam is the one other solid, head-sized thing on a page, and near
+            // its end it passes every test above. It gives itself away by being
+            // thin: about half a staff space, where a head is a whole one. Measured
+            // down the middle of the candidate, where a head is at its tallest and
+            // no stem reaches.
+            val tall = columnRun(image, x, y)
+            if (tall < space * MIN_HEAD_HEIGHT || tall > space * MAX_HEAD_HEIGHT) return null
+            // And a beam that has merged with a staff line is thick enough to pass
+            // the height test, so measure the other way too: a head is about a
+            // space and a third wide, a ledger line twice that, a beam far more.
+            val long = rowRun(image, x, y)
+            if (long > space * MAX_HEAD_WIDTH) return null
+            return NoteHead(x.toDouble(), y.toDouble(), 0, true, body)
+        }
+        if (core > OPEN_CORE) return null
+        val leftFlank = sums.ratio(x - rx, y - coreY, x - rx + flankW, y + coreY)
+        val rightFlank = sums.ratio(x + rx - flankW, y - coreY, x + rx, y + coreY)
+        if (leftFlank < OPEN_FLANK || rightFlank < OPEN_FLANK) return null
+        // The hole has to be enclosed, not merely flanked. Without this, the edge
+        // of any horizontal bar reads as an open head: white above it, ink below,
+        // which looks the same as a ring when only the left and right are checked.
+        val above = sums.ratio(x - coreX, y - ry, x + coreX, y - ry + flankH)
+        val below = sums.ratio(x - coreX, y + ry - flankH, x + coreX, y + ry)
+        if (above < OPEN_ENCLOSE || below < OPEN_ENCLOSE) return null
+        // The ring has to close around the hole, not merely sit above and below
+        // it. The slot between two beams is bounded top and bottom by the beams
+        // and passes every test so far, and gives itself away by running the whole
+        // length of the beam where a note's hole is barely a staff space across.
+        if (whiteRowRun(image, x, y) > space * MAX_HOLE_WIDTH) return null
+        // Everything above can be satisfied by white that merely happens to have
+        // ink on four sides of it — between a sharp's upright and the note it
+        // belongs to, or between two beams. A note's hole is genuinely closed, so
+        // the last test is to fill it and see whether it stays put.
+        if (!holeIsClosed(image, x, y, holeW, holeH)) return null
+        return NoteHead(x.toDouble(), y.toDouble(), 0, false, (leftFlank + rightFlank) / 2)
     }
 
     /** How tall the unbroken ink is through this column, counting [y] itself. */
@@ -227,4 +275,7 @@ object HeadDetector {
     private const val MAX_HEAD_HEIGHT = 1.60
     private const val MAX_HEAD_WIDTH = 2.60
     private const val MAX_HOLE_WIDTH = 1.00
+
+    /** Enough for any page of music, and a ceiling on what a noisy photograph can cost. */
+    private const val MAX_CANDIDATES = 20_000
 }

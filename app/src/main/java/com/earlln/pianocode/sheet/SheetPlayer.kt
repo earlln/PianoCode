@@ -15,7 +15,7 @@ import java.io.File
  * That synthesiser is not guaranteed — a handful of devices ship without it — so every step
  * reports whether it worked rather than failing quietly into silence.
  */
-class SheetPlayer(private val context: Context) {
+class SheetPlayer(private val context: Context, private val fileName: String = "progression.mid") {
 
     private var player: MediaPlayer? = null
 
@@ -25,7 +25,7 @@ class SheetPlayer(private val context: Context) {
     fun play(midi: ByteArray, onFinished: () -> Unit): Boolean {
         stop()
         return try {
-            val file = File(context.cacheDir, "progression.mid").apply { writeBytes(midi) }
+            val file = File(context.cacheDir, fileName).apply { writeBytes(midi) }
             MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()

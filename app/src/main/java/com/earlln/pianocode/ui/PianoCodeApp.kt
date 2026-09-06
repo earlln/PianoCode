@@ -42,6 +42,7 @@ import com.earlln.pianocode.ui.screens.ChordDetailScreen
 import com.earlln.pianocode.ui.screens.ChordListScreen
 import com.earlln.pianocode.ui.screens.HomeScreen
 import com.earlln.pianocode.ui.screens.ScaleScreen
+import com.earlln.pianocode.ui.screens.ScorePlayerScreen
 import com.earlln.pianocode.ui.screens.SettingsScreen
 import com.earlln.pianocode.ui.screens.SheetConverterScreen
 import kotlinx.coroutines.launch
@@ -191,6 +192,9 @@ private fun AppNavHost(
         }
         composable(Destination.CONVERTER.route) {
             SheetConverterScreen(contentPadding = contentPadding)
+        }
+        composable(Destination.SCORE_PLAYER.route) {
+            ScorePlayerScreen(contentPadding = contentPadding)
         }
         composable(Destination.SETTINGS.route) {
             SettingsScreen(contentPadding = contentPadding)
