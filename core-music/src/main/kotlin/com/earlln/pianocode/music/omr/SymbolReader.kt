@@ -55,9 +55,9 @@ data class NoteSymbol(
 object SymbolReader {
 
     fun read(inkWithoutStaffLines: MonoImage, staff: Staff, heads: List<NoteHead>): List<NoteSymbol> =
-        heads.map { read(inkWithoutStaffLines, staff, it) }
+        heads.map { read(inkWithoutStaffLines, staff, it, heads) }
 
-    private fun read(image: MonoImage, staff: Staff, head: NoteHead): NoteSymbol {
+    private fun read(image: MonoImage, staff: Staff, head: NoteHead, all: List<NoteHead>): NoteSymbol {
         val space = staff.space
         val up = stemLength(image, head, space, up = true)
         val down = stemLength(image, head, space, up = false)
@@ -71,7 +71,13 @@ object SymbolReader {
             true -> up
             false -> down
         }
-        val beams = if (stem == null) 0 else countBeams(image, stem, space)
+        // The other notes of a chord hang off this same stem, and a note head is exactly
+        // as wide as a beam is. Their heights are handed to the beam count so it can step
+        // over them instead of counting each one as a beam.
+        val others = all
+            .filter { it !== head && kotlin.math.abs(it.x - head.x) < space * 1.4 }
+            .map { it.y }
+        val beams = if (stem == null) 0 else countBeams(image, stem, space, others)
         return NoteSymbol(head, stemUp, beams, countDots(image, head, space))
     }
 
@@ -120,7 +126,12 @@ object SymbolReader {
      * one of either halves the note — and telling them apart would only be needed to
      * redraw the page, which this never does.
      */
-    private fun countBeams(image: MonoImage, stem: Stem, space: Double): Int {
+    private fun countBeams(
+        image: MonoImage,
+        stem: Stem,
+        space: Double,
+        otherHeads: List<Double>,
+    ): Int {
         if (stem.length < space * MIN_STEM) return 0
         val wide = space * BEAM_WIDTH
         val reach = (space * 2.4).roundToInt().coerceAtMost(stem.length - (space * 0.7).roundToInt())
@@ -131,6 +142,7 @@ object SymbolReader {
         var bandRows = 0
         for (offset in 0 until reach) {
             val y = if (stem.up) stem.tipY + offset else stem.tipY - offset
+            if (otherHeads.any { kotlin.math.abs(it - y) < space * 0.60 }) continue
             val run = rowRun(image, stem.x, y)
             if (run >= wide) {
                 bandRows++
@@ -160,13 +172,17 @@ object SymbolReader {
      */
     private fun countDots(image: MonoImage, head: NoteHead, space: Double): Int {
         val from = (head.x + space * 0.75).roundToInt()
-        val to = (head.x + space * 2.2).roundToInt()
+        val to = (head.x + space * 2.4).roundToInt()
         val top = (head.y - space * 0.75).roundToInt()
         val bottom = (head.y + space * 0.75).roundToInt()
-        val small = space * 0.55
+        val biggest = space * 0.45
+        val smallest = space * 0.16
 
         var dots = 0
         var x = from
+        // A ledger line runs out from under the head into the very place a dot would be.
+        // Step over anything still joined to the head before looking for one.
+        while (x <= to && (top..bottom).any { image.isInk(x, it) }) x++
         while (x <= to) {
             if ((top..bottom).none { image.isInk(x, it) }) {
                 x++
@@ -177,8 +193,14 @@ object SymbolReader {
             val rows = (top..bottom).filter { y -> (x..end).any { image.isInk(it, y) } }
             val width = end - x + 1
             val height = if (rows.isEmpty()) 0 else rows.last() - rows.first() + 1
-            // A dot is small in both directions; a neighbouring head or a bar line is not.
-            if (width <= small && height <= small && width >= 1 && height >= 1) dots++
+            // A dot is small in both directions and about as tall as it is wide. A stub
+            // of ledger line is small too, but flat.
+            val round = height in (width / 2)..(width * 2)
+            if (width <= biggest && height <= biggest &&
+                width >= smallest && height >= smallest && round
+            ) {
+                dots++
+            }
             x = end + 1
         }
         return dots.coerceAtMost(2)

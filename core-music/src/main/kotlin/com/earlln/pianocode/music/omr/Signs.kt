@@ -74,6 +74,31 @@ internal object SignReader {
 }
 
 /**
+ * How far above and below a staff its own music can be looked for.
+ *
+ * A treble clef is drawn taller than its staff, so the search for one has to reach past
+ * the staff — but not so far that it reaches the staff below, whose clef would then be
+ * gathered into the same patch of ink and read as one enormous glyph. On a page of piano
+ * music the two staves are close enough for that to happen every time.
+ */
+data class Reach(val top: Int, val bottom: Int) {
+    companion object {
+        fun around(staff: Staff, spaces: Double = 3.0): Reach = Reach(
+            top = (staff.top - staff.space * spaces).toInt(),
+            bottom = (staff.bottom + staff.space * spaces).toInt(),
+        )
+
+        /** The reach of [staff] when [above] and [below] are its neighbours on the page. */
+        fun between(staff: Staff, above: Staff?, below: Staff?, spaces: Double = 3.0): Reach {
+            val wide = around(staff, spaces)
+            val ceiling = above?.let { ((it.bottom + staff.top) / 2).toInt() } ?: wide.top
+            val floor = below?.let { ((staff.bottom + it.top) / 2).toInt() } ?: wide.bottom
+            return Reach(maxOf(wide.top, ceiling), minOf(wide.bottom, floor))
+        }
+    }
+}
+
+/**
  * Which clef the staff is in, decided by how far the glyph reaches.
  *
  * A treble clef is drawn taller than the staff it sits on, curling above the top line and
@@ -83,14 +108,14 @@ internal object SignReader {
  */
 object ClefReader {
 
-    fun detect(image: MonoImage, staff: Staff): Clef {
+    fun detect(image: MonoImage, staff: Staff, reach: Reach = Reach.around(staff)): Clef {
         val space = staff.space
         val blobs = Blobs.inStrip(
             image,
             x0 = staff.left,
             x1 = (staff.left + space * 4).toInt(),
-            top = (staff.top - space * 3).toInt(),
-            bottom = (staff.bottom + space * 3).toInt(),
+            top = reach.top,
+            bottom = reach.bottom,
         )
         // The first thing wide enough to be a glyph. A staff often opens with a thin bar
         // line, which is not one.
@@ -99,14 +124,14 @@ object ClefReader {
     }
 
     /** Where the clef ends, so the key signature can be looked for after it. */
-    fun endOf(image: MonoImage, staff: Staff): Int {
+    fun endOf(image: MonoImage, staff: Staff, reach: Reach = Reach.around(staff)): Int {
         val space = staff.space
         val blobs = Blobs.inStrip(
             image,
             x0 = staff.left,
             x1 = (staff.left + space * 4).toInt(),
-            top = (staff.top - space * 3).toInt(),
-            bottom = (staff.bottom + space * 3).toInt(),
+            top = reach.top,
+            bottom = reach.bottom,
         )
         val clef = blobs.firstOrNull { it.width >= space * 0.45 } ?: return staff.left
         return clef.right
