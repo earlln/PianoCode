@@ -12,6 +12,8 @@ data class ReadNote(
     /** Where it was found, so the app can show its reading over the page. */
     val x: Double,
     val y: Double,
+    /** The event it came from, so a correction can be tied back to what is heard. */
+    val eventId: Int = 0,
 )
 
 /** What one staff turned out to be. */
@@ -22,17 +24,33 @@ data class ReadStaff(
     val noteCount: Int,
 )
 
-/** A whole page, read. */
+/**
+ * A whole page, read.
+ *
+ * What is stored is the events in the order they are written, not the notes with their
+ * start times: the times are worked out from the events whenever they are wanted. That is
+ * what makes the reading correctable — lengthen a note and everything after it moves on
+ * its own, with nothing left to forget to update.
+ */
 data class ReadScore(
-    val notes: List<ReadNote>,
+    val events: List<ScoreEvent>,
     val staves: List<ReadStaff>,
+    /** Staff indices that sound together; each group follows the one before it. */
+    val systems: List<List<Int>>,
     val scale: PageScale?,
 ) {
-    val isEmpty: Boolean get() = notes.isEmpty()
+    val notes: List<ReadNote> get() = Timeline.notesOf(events, systems)
+
+    val timeline: List<TimedEvent> get() = Timeline.of(events, systems)
+
+    val isEmpty: Boolean get() = events.none { !it.isRest }
 
     /** Length in crotchets, which is what a player needs to know when to stop. */
-    val lengthQuarters: Double
-        get() = notes.maxOfOrNull { it.startQuarters + it.quarters } ?: 0.0
+    val lengthQuarters: Double get() = Timeline.lengthQuarters(events, systems)
+
+    fun withEvents(events: List<ScoreEvent>): ReadScore = copy(events = events)
+
+    fun staffOf(event: ScoreEvent): ReadStaff? = staves.getOrNull(event.staffIndex)
 }
 
 /**
@@ -51,9 +69,10 @@ data class ReadScore(
 object ScoreReader {
 
     fun read(image: MonoImage): ReadScore {
-        val scale = PageScale.estimate(image) ?: return ReadScore(emptyList(), emptyList(), null)
+        val scale = PageScale.estimate(image)
+            ?: return ReadScore(emptyList(), emptyList(), emptyList(), null)
         val staves = StaffDetector.detect(image, scale)
-        if (staves.isEmpty()) return ReadScore(emptyList(), emptyList(), scale)
+        if (staves.isEmpty()) return ReadScore(emptyList(), emptyList(), emptyList(), scale)
 
         val ink = StaffLines.remove(image, staves, scale)
         val read = staves.mapIndexed { index, staff ->
@@ -63,12 +82,19 @@ object ScoreReader {
                 Reach.between(staff, staves.getOrNull(index - 1), staves.getOrNull(index + 1)),
             )
         }
-        val notes = placeInTime(read, systemsOf(staves))
+        val systems = systemsOf(staves)
+        val events = eventsOf(read)
         return ReadScore(
-            notes = notes,
+            events = events,
             staves = read.mapIndexed { index, one ->
-                ReadStaff(one.staff, one.clef, one.key, notes.count { it.staffIndex == index })
+                ReadStaff(
+                    staff = one.staff,
+                    clef = one.clef,
+                    key = one.key,
+                    noteCount = events.count { it.staffIndex == index && !it.isRest },
+                )
             },
+            systems = systems,
             scale = scale,
         )
     }
@@ -133,43 +159,29 @@ object ScoreReader {
     }
 
     /**
-     * Lays the read symbols out in time.
+     * Turns each staff's reading into the events that make it up.
      *
-     * Heads sharing a column are one chord and start together; systems follow one another,
-     * and the staves inside a system all start where the system does. Written music says
-     * far more about timing than this — bar lengths, rests, ties — but a melody read this
-     * way comes out in the right order at the right relative lengths, which is what turns
-     * a page into something you can hear.
+     * Heads sharing a column are one chord and become one event; a rest is an event with
+     * nothing in it. When each of these happens is not decided here — that falls out of
+     * the order they are in, so a correction later cannot leave the timing stale.
      */
-    private fun placeInTime(
-        readings: List<StaffReading>,
-        systems: List<List<Int>>,
-    ): List<ReadNote> {
-        val notes = mutableListOf<ReadNote>()
-        var systemStart = 0.0
-        for (system in systems) {
-            var systemEnd = systemStart
-            for (index in system) {
-                val reading = readings.getOrNull(index) ?: continue
-                var time = systemStart
-                for (moment in momentsOf(reading)) {
-                    for (voice in moment.voices) {
-                        notes += ReadNote(
-                            pitch = voice.pitch,
-                            startQuarters = time,
-                            quarters = voice.symbol.quarters,
-                            staffIndex = index,
-                            x = voice.symbol.x,
-                            y = voice.symbol.head.y,
-                        )
-                    }
-                    time += moment.quarters
-                }
-                if (time > systemEnd) systemEnd = time
+    private fun eventsOf(readings: List<StaffReading>): List<ScoreEvent> {
+        val events = mutableListOf<ScoreEvent>()
+        var id = 1
+        readings.forEachIndexed { index, reading ->
+            for (moment in momentsOf(reading)) {
+                events += ScoreEvent(
+                    id = id++,
+                    staffIndex = index,
+                    pitches = moment.voices.map { it.pitch },
+                    quarters = moment.quarters,
+                    x = moment.x,
+                    y = moment.voices.minByOrNull { it.symbol.head.y }?.symbol?.head?.y
+                        ?: reading.staff.top,
+                )
             }
-            systemStart = systemEnd
         }
-        return notes.sortedWith(compareBy({ it.startQuarters }, { it.pitch.midi }))
+        return events
     }
 
     /**

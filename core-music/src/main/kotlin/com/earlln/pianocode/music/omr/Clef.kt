@@ -29,4 +29,8 @@ enum class Clef(val bottomLineDiatonic: Int, val koreanName: String) {
 
     /** The letter alone, which is what a key signature is stated in. */
     fun letterAt(step: Int): Int = Math.floorMod(bottomLineDiatonic + step, 7)
+
+    /** Where [pitch] is written on this staff, which is what draws it back onto one. */
+    fun stepOf(pitch: Pitch): Int =
+        pitch.octave * 7 + pitch.note.letter - bottomLineDiatonic
 }

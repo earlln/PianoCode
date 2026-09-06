@@ -125,4 +125,18 @@ data class Pitch(val note: Note, val octave: Int) {
     val midi: Int get() = (octave + 1) * 12 + Note.LETTER_SEMITONES[note.letter] + note.accidental
 
     override fun toString(): String = "${note.name}$octave"
+
+    companion object {
+        /**
+         * The pitch a MIDI number stands for, spelled with sharps or flats as asked.
+         *
+         * A sound has one number and several spellings, so this can only be told which one
+         * is wanted; it is used where an edit has pushed a note past a double sharp and
+         * the letter has to be given up to keep the note readable.
+         */
+        fun ofMidi(midi: Int, preferFlats: Boolean = false): Pitch = Pitch(
+            Note.fromPitchClass(Math.floorMod(midi, 12), preferFlats),
+            Math.floorDiv(midi, 12) - 1,
+        )
+    }
 }

@@ -21,6 +21,16 @@ class SheetPlayer(private val context: Context, private val fileName: String = "
 
     val isPlaying: Boolean get() = player?.isPlaying == true
 
+    /**
+     * How far into the piece the synthesiser has got, in milliseconds.
+     *
+     * This is what lets the screen point at the note being sounded. It is asked of the
+     * player rather than counted by a timer of our own, because a timer drifts away from
+     * the audio and the whole value of a playhead is that it agrees with the ear.
+     */
+    val positionMillis: Long
+        get() = player?.runCatching { currentPosition.toLong() }?.getOrNull() ?: 0L
+
     /** Starts [midi]. Returns false when this device cannot play it. */
     fun play(midi: ByteArray, onFinished: () -> Unit): Boolean {
         stop()

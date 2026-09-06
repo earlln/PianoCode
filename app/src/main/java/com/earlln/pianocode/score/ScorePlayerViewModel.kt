@@ -7,9 +7,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.earlln.pianocode.music.Instrument
 import com.earlln.pianocode.music.MidiWriter
+import com.earlln.pianocode.music.omr.KeySignature
 import com.earlln.pianocode.music.omr.MonoImage
 import com.earlln.pianocode.music.omr.ReadScore
+import com.earlln.pianocode.music.omr.ScoreEdits
+import com.earlln.pianocode.music.omr.ScoreEvent
 import com.earlln.pianocode.music.omr.ScoreReader
+import com.earlln.pianocode.music.omr.TimedEvent
 import com.earlln.pianocode.sheet.SheetPlayer
 import com.earlln.pianocode.util.ImageIo
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +21,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -31,12 +38,31 @@ data class ScorePlayerState(
     /** Semitones to move everything by, so a piece can be played where it can be sung. */
     val transpose: Int = 0,
     val playing: Boolean = false,
+    /** How far into the piece the sound has got, so the screen can point at it. */
+    val playheadQuarters: Double = 0.0,
+    /** The event the reader has picked out to correct, if any. */
+    val selectedId: Int? = null,
+    val showNames: Boolean = true,
+    val edited: Boolean = false,
     val pdfPageCount: Int = 0,
     val pdfPage: Int = 0,
     val message: String? = null,
 ) {
     val notes: Int get() = score?.notes?.size ?: 0
     val hasNotes: Boolean get() = notes > 0
+
+    val timeline: List<TimedEvent> get() = score?.timeline.orEmpty()
+
+    val selected: ScoreEvent? get() = score?.events?.firstOrNull { it.id == selectedId }
+
+    /** The key of the staff the selected event is on, which its pitches are spelled in. */
+    val selectedKey: KeySignature
+        get() = selected?.let { score?.staves?.getOrNull(it.staffIndex)?.key } ?: KeySignature()
+
+    /** Events sounding right now, which is what the score and the photo both highlight. */
+    val sounding: Set<Int>
+        get() = if (!playing) emptySet()
+        else timeline.filter { it.covers(playheadQuarters) }.map { it.event.id }.toSet()
 }
 
 /**
@@ -55,6 +81,7 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
     private val playerLazy = lazy { SheetPlayer(application, fileName = "score.mid") }
     private val player: SheetPlayer get() = playerLazy.value
     private var sourceUri: Uri? = null
+    private var playhead: Job? = null
 
     fun load(uri: Uri, page: Int = 0) {
         sourceUri = uri
@@ -101,6 +128,60 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
         load(uri, page)
     }
 
+    // --- correcting what was read ------------------------------------------
+
+    fun select(id: Int?) = _state.update { it.copy(selectedId = if (it.selectedId == id) null else id) }
+
+    fun setShowNames(show: Boolean) = _state.update { it.copy(showNames = show) }
+
+    /** Moves the picked note up or down the staff, which fixes a head read a line off. */
+    fun moveSelectedByStep(steps: Int) = edit { score, id ->
+        ScoreEdits.byStep(score.events, id, steps, _state.value.selectedKey)
+    }
+
+    /** Raises or lowers it a semitone, which fixes a sharp or flat that was missed. */
+    fun moveSelectedBySemitone(semitones: Int) = edit { score, id ->
+        ScoreEdits.bySemitone(score.events, id, semitones)
+    }
+
+    fun setSelectedLength(quarters: Double) = edit { score, id ->
+        ScoreEdits.setLength(score.events, id, quarters)
+    }
+
+    fun toggleSelectedRest() = edit { score, id ->
+        val fallback = score.events.firstOrNull { it.id == id }?.pitches?.firstOrNull()
+            ?: score.staves.getOrNull(0)?.clef?.pitchAt(4)
+            ?: return@edit score.events
+        ScoreEdits.toggleRest(score.events, id, fallback)
+    }
+
+    fun deleteSelected() {
+        val id = _state.value.selectedId ?: return
+        edit { score, _ -> ScoreEdits.remove(score.events, id) }
+        _state.update { it.copy(selectedId = null) }
+    }
+
+    fun insertAfterSelected() = edit { score, id -> ScoreEdits.insertAfter(score.events, id) }
+
+    /**
+     * Applies one correction.
+     *
+     * Playback stops first. Carrying on through an edit would keep sounding the file
+     * written before it, so what is heard would disagree with what is shown — and the
+     * whole point of correcting here is that the two agree.
+     */
+    private inline fun edit(change: (ReadScore, Int) -> List<ScoreEvent>) {
+        val current = _state.value
+        val score = current.score ?: return
+        val id = current.selectedId ?: return
+        if (current.playing) stop()
+        _state.update {
+            it.copy(score = score.withEvents(change(score, id)), edited = true)
+        }
+    }
+
+    // --- hearing it ---------------------------------------------------------
+
     fun setInstrument(instrument: Instrument) = restarting {
         _state.update { it.copy(instrument = instrument) }
     }
@@ -143,10 +224,11 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
             instrument = current.instrument,
             bpm = current.tempo,
         )
-        val started = player.play(midi) { _state.update { state -> state.copy(playing = false) } }
+        val started = player.play(midi) { finished() }
+        if (started) followPlayhead(current.tempo)
         _state.update {
             if (started) {
-                it.copy(playing = true)
+                it.copy(playing = true, playheadQuarters = 0.0)
             } else {
                 it.copy(
                     playing = false,
@@ -158,8 +240,35 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun stop() {
+        playhead?.cancel()
+        playhead = null
         if (playerLazy.isInitialized()) player.stop()
-        _state.update { it.copy(playing = false) }
+        _state.update { it.copy(playing = false, playheadQuarters = 0.0) }
+    }
+
+    private fun finished() {
+        playhead?.cancel()
+        playhead = null
+        _state.update { it.copy(playing = false, playheadQuarters = 0.0) }
+    }
+
+    /**
+     * Keeps the screen's idea of "now" in step with what is being heard.
+     *
+     * The position is asked of the player rather than counted here, because a count of our
+     * own drifts against the audio and a playhead that has drifted is worse than none: it
+     * points confidently at the wrong note.
+     */
+    private fun followPlayhead(bpm: Int) {
+        playhead?.cancel()
+        playhead = viewModelScope.launch {
+            val perQuarter = 60_000.0 / bpm.coerceIn(20, 300)
+            while (isActive) {
+                val quarters = player.positionMillis / perQuarter
+                _state.update { it.copy(playheadQuarters = quarters) }
+                delay(PLAYHEAD_STEP_MILLIS)
+            }
+        }
     }
 
     fun showMessage(text: String) = _state.update { it.copy(message = text) }
@@ -167,6 +276,7 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun dismissMessage() = _state.update { it.copy(message = null) }
 
     override fun onCleared() {
+        playhead?.cancel()
         if (playerLazy.isInitialized()) player.stop()
         super.onCleared()
     }
@@ -192,6 +302,9 @@ private fun Bitmap.toMono(): MonoImage {
     }
     return MonoImage.fromGray(width, height, gray)
 }
+
+/** Often enough to look continuous, rarely enough to cost nothing worth measuring. */
+private const val PLAYHEAD_STEP_MILLIS = 60L
 
 private const val NOTHING_READ =
     "이 페이지에서 음표를 찾지 못했습니다. 오선과 음표가 또렷하게 나온 " +
