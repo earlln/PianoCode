@@ -126,6 +126,62 @@ class SheetCanvas(val width: Int, val height: Int, private val paper: Int = 250)
         box((cx + pitch * 1.2).toInt(), (staffTop + pitch * 1.3).toInt(), (cx + pitch * 1.5).toInt(), (staffTop + pitch * 1.6).toInt())
     }
 
+    /**
+     * The little black brick that is both a semibreve rest and a minim rest.
+     *
+     * [hanging] is the only thing that separates four beats of silence from two: one hangs
+     * below its line, the other sits on top of one.
+     */
+    fun brickRest(cx: Double, lineY: Double, pitch: Double, hanging: Boolean) {
+        val halfWidth = pitch * 0.5
+        val thick = (pitch * 0.42).toInt()
+        val top = if (hanging) lineY.toInt() else (lineY - thick).toInt()
+        box((cx - halfWidth).toInt(), top, (cx + halfWidth).toInt(), top + thick)
+    }
+
+    /**
+     * A crotchet rest: a zig-zag down most of the staff.
+     *
+     * Drawn as the strokes it is made of rather than as the printed glyph, because what
+     * the reader measures is how tall and how wide it is, not how elegant.
+     */
+    fun crotchetRest(cx: Double, cy: Double, pitch: Double) {
+        val half = pitch * 1.35
+        var y = cy - half
+        var x = cx - pitch * 0.30
+        val step = pitch * 0.55
+        var direction = 1
+        while (y < cy + half) {
+            val toX = x + direction * pitch * 0.55
+            diagonal(x, y, toX, y + step)
+            x = toX
+            y += step
+            direction = -direction
+        }
+    }
+
+    /** A quaver rest: one hook on a short stroke. */
+    fun quaverRest(cx: Double, cy: Double, pitch: Double, hooks: Int = 1) {
+        val top = cy - pitch * (0.55 + 0.35 * hooks)
+        val bottom = cy + pitch * 0.55
+        diagonal(cx + pitch * 0.28, top, cx - pitch * 0.20, bottom)
+        for (i in 0 until hooks) {
+            val y = top + i * pitch * 0.62
+            head(cx - pitch * 0.05, y + pitch * 0.12, pitch * 0.24, pitch * 0.18, filled = true, tiltDegrees = 0.0)
+            hLine((cx - pitch * 0.05).toInt(), (cx + pitch * 0.30).toInt(), (y + pitch * 0.05).toInt(), thickness = 2)
+        }
+    }
+
+    private fun diagonal(x0: Double, y0: Double, x1: Double, y1: Double, thickness: Int = 3) {
+        val steps = maxOf(kotlin.math.abs(x1 - x0), kotlin.math.abs(y1 - y0)).toInt().coerceAtLeast(1)
+        for (i in 0..steps) {
+            val t = i.toDouble() / steps
+            val x = (x0 + (x1 - x0) * t).toInt()
+            val y = (y0 + (y1 - y0) * t).toInt()
+            for (dy in 0 until thickness) for (dx in 0 until thickness) put(x + dx, y + dy, 20)
+        }
+    }
+
     /** Dims one region, the way a phone's own shadow falls across a page. */
     fun shade(x0: Int, y0: Int, x1: Int, y1: Int, by: Int) {
         for (y in y0..y1) {

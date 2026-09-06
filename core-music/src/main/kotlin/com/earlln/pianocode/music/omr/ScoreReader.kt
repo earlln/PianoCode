@@ -43,10 +43,10 @@ data class ReadScore(
  * decisions live here and nowhere else: which staves are played together, and where in
  * time each note falls.
  *
- * What it does not read is rests. Nothing here can tell where silence goes, so notes
- * follow one another without gaps, which is right for a melody written without rests and
- * short of the truth for anything else. It is stated plainly to the reader rather than
- * papered over.
+ * Rests take their time alongside the notes, which is what keeps a bar in time; without
+ * them every silence shortens the piece and everything after it arrives early. Ties,
+ * grace notes and triplets are still not read, and a semiquaver rest is counted as a
+ * crotchet rest rather than guessed at.
  */
 object ScoreReader {
 
@@ -95,7 +95,16 @@ object ScoreReader {
         val signs = symbols.mapNotNull { symbol ->
             AccidentalReader.before(ink, staff, symbol.head)?.let { symbol to it }
         }.toMap()
-        return StaffReading(staff, clef, key, symbols, BarLines.detect(ink, staff, musicFrom), signs)
+        val rests = RestReader.detect(ink, staff, musicFrom, heads)
+        return StaffReading(
+            staff = staff,
+            clef = clef,
+            key = key,
+            symbols = symbols,
+            bars = BarLines.detect(ink, staff, musicFrom),
+            signs = signs,
+            rests = rests,
+        )
     }
 
     /**
@@ -143,9 +152,8 @@ object ScoreReader {
             for (index in system) {
                 val reading = readings.getOrNull(index) ?: continue
                 var time = systemStart
-                for (chord in chordsOf(reading)) {
-                    val length = chord.maxOf { it.symbol.quarters }
-                    for (voice in chord) {
+                for (moment in momentsOf(reading)) {
+                    for (voice in moment.voices) {
                         notes += ReadNote(
                             pitch = voice.pitch,
                             startQuarters = time,
@@ -155,7 +163,7 @@ object ScoreReader {
                             y = voice.symbol.head.y,
                         )
                     }
-                    time += length
+                    time += moment.quarters
                 }
                 if (time > systemEnd) systemEnd = time
             }
@@ -171,6 +179,25 @@ object ScoreReader {
      * octave, which is why the bar lines were found; without them a single sharp would be
      * either forgotten at once or held to the end of the piece.
      */
+    /**
+     * Everything that happens on one staff, in the order it is written.
+     *
+     * A rest is a moment with no notes in it: it takes its time and sounds nothing. Merging
+     * the two by where they sit on the page is what keeps a bar in time — without it every
+     * silence shortens the piece and everything after it arrives early.
+     */
+    private fun momentsOf(reading: StaffReading): List<Moment> {
+        val chords = chordsOf(reading).map { voices ->
+            Moment(
+                x = voices.first().symbol.x,
+                quarters = voices.maxOf { it.symbol.quarters },
+                voices = voices,
+            )
+        }
+        val silences = reading.rests.map { Moment(it.x, it.quarters, emptyList()) }
+        return (chords + silences).sortedBy { it.x }
+    }
+
     private fun chordsOf(reading: StaffReading): List<List<Voice>> {
         val space = reading.staff.space
         val chords = mutableListOf<List<Voice>>()
@@ -213,7 +240,11 @@ object ScoreReader {
         val bars: List<Int>,
         /** The sign standing in front of each head, where there is one. */
         val signs: Map<NoteSymbol, Accidental>,
+        val rests: List<Rest>,
     )
+
+    /** One thing that happens on a staff: a chord, a single note, or a silence. */
+    private class Moment(val x: Double, val quarters: Double, val voices: List<Voice>)
 
     private data class Voice(val symbol: NoteSymbol, val pitch: Pitch)
 }
