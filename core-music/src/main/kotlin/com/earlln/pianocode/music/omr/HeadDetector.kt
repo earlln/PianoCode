@@ -94,6 +94,11 @@ object HeadDetector {
                 val above = sums.ratio(x - coreX, y - ry, x + coreX, y - ry + flankH)
                 val below = sums.ratio(x - coreX, y + ry - flankH, x + coreX, y + ry)
                 if (above < OPEN_ENCLOSE || below < OPEN_ENCLOSE) continue
+                // The ring has to close around the hole, not merely sit above and below
+                // it. The slot between two beams is bounded top and bottom by the beams
+                // and passes every test so far, and gives itself away by running the whole
+                // length of the beam where a note's hole is barely a staff space across.
+                if (whiteRowRun(inkWithoutStaffLines, x, y) > space * MAX_HOLE_WIDTH) continue
                 found += NoteHead(x.toDouble(), y.toDouble(), 0, false, (left + right) / 2)
             }
         }
@@ -108,6 +113,16 @@ object HeadDetector {
         var bottom = y
         while (image.isInk(x, bottom + 1)) bottom++
         return bottom - top + 1
+    }
+
+    /** How far the paper runs uninterrupted across this row, counting [x] itself. */
+    private fun whiteRowRun(image: MonoImage, x: Int, y: Int): Int {
+        if (image.isInk(x, y)) return 0
+        var left = x
+        while (left > 0 && !image.isInk(left - 1, y)) left--
+        var right = x
+        while (right < image.width - 1 && !image.isInk(right + 1, y)) right++
+        return right - left + 1
     }
 
     /** How wide the unbroken ink is through this row, counting [x] itself. */
@@ -163,4 +178,5 @@ object HeadDetector {
     private const val MIN_HEAD_HEIGHT = 0.62
     private const val MAX_HEAD_HEIGHT = 1.60
     private const val MAX_HEAD_WIDTH = 2.60
+    private const val MAX_HOLE_WIDTH = 1.00
 }
