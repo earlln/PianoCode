@@ -33,6 +33,8 @@ data class ScorePlayerState(
     val stage: ReadingStage = ReadingStage.IDLE,
     val page: Bitmap? = null,
     val score: ReadScore? = null,
+    /** The reading as it came out, kept so a correction can be told from a reading. */
+    val asRead: ReadScore? = null,
     val instrument: Instrument = Instrument.PIANO,
     val tempo: Int = 90,
     /** Semitones to move everything by, so a piece can be played where it can be sung. */
@@ -43,9 +45,6 @@ data class ScorePlayerState(
     /** The event the reader has picked out to correct, if any. */
     val selectedId: Int? = null,
     val showNames: Boolean = true,
-    val showLyrics: Boolean = true,
-    /** The page's own words, gathered under the staff each belongs to. */
-    val lyrics: Map<Int, List<PageText>> = emptyMap(),
     val edited: Boolean = false,
     val pdfPageCount: Int = 0,
     val pdfPage: Int = 0,
@@ -66,6 +65,24 @@ data class ScorePlayerState(
     val sounding: Set<Int>
         get() = if (!playing) emptySet()
         else timeline.filter { it.covers(playheadQuarters) }.map { it.event.id }.toSet()
+
+    /**
+     * Events that no longer say what the reading said.
+     *
+     * Only these paint over the page: a note left as it was read has nothing to correct,
+     * and covering the printed note would throw away the very thing being checked against.
+     */
+    val changed: Set<Int>
+        get() {
+            val before = asRead?.events?.associateBy { it.id } ?: return emptySet()
+            return score?.events.orEmpty()
+                .filter { now ->
+                    val was = before[now.id]
+                    was == null || was.pitches != now.pitches || was.quarters != now.quarters
+                }
+                .map { it.id }
+                .toSet()
+        }
 }
 
 /**
@@ -83,7 +100,6 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private val playerLazy = lazy { SheetPlayer(application, fileName = "score.mid") }
     private val player: SheetPlayer get() = playerLazy.value
-    private val textReader by lazy { PageTextReader() }
     private var sourceUri: Uri? = null
     private var playhead: Job? = null
 
@@ -120,33 +136,13 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
                 it.copy(
                     stage = ReadingStage.DONE,
                     score = score,
+                    asRead = score,
                     selectedId = null,
                     edited = false,
-                    lyrics = emptyMap(),
                     message = if (score.isEmpty) NOTHING_READ else null,
                 )
             }
-            readLyrics(bitmap, score)
         }
-    }
-
-    /**
-     * Reads the page's own words and files them under the staff each belongs to.
-     *
-     * Done after the notes rather than alongside them, and allowed to fail quietly: words
-     * under the staff help a reader find their place, and a page that gives none is still
-     * perfectly playable.
-     */
-    private suspend fun readLyrics(bitmap: Bitmap, score: ReadScore) {
-        if (score.staves.isEmpty()) return
-        val found = runCatching { textReader.read(bitmap) }.getOrNull() ?: return
-        val lyrics = Lyrics.assign(
-            text = found,
-            staffBottoms = score.staves.map { it.staff.bottom },
-            staffTops = score.staves.map { it.staff.top },
-            space = score.staves.first().staff.space,
-        )
-        _state.update { it.copy(lyrics = lyrics) }
     }
 
     fun openPdfPage(page: Int) {
@@ -160,8 +156,6 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun select(id: Int?) = _state.update { it.copy(selectedId = if (it.selectedId == id) null else id) }
 
     fun setShowNames(show: Boolean) = _state.update { it.copy(showNames = show) }
-
-    fun setShowLyrics(show: Boolean) = _state.update { it.copy(showLyrics = show) }
 
     /**
      * Puts the picked note on the line or space that was tapped.
@@ -221,6 +215,13 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun insertAfterSelected() = edit { score, id -> ScoreEdits.insertAfter(score.events, id) }
+
+    /** Throws away every correction and goes back to what was read off the page. */
+    fun revertEdits() {
+        val original = _state.value.asRead ?: return
+        if (_state.value.playing) stop()
+        _state.update { it.copy(score = original, edited = false, selectedId = null) }
+    }
 
     /**
      * Applies one correction.
@@ -336,7 +337,6 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     override fun onCleared() {
         playhead?.cancel()
-        runCatching { textReader.close() }
         if (playerLazy.isInitialized()) player.stop()
         super.onCleared()
     }
