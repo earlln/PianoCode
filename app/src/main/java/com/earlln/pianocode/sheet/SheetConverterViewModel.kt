@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.earlln.pianocode.music.Chord
+import com.earlln.pianocode.music.Instrument
+import com.earlln.pianocode.music.MidiWriter
 import com.earlln.pianocode.music.ChordConversion
 import com.earlln.pianocode.music.ChordStyle
 import com.earlln.pianocode.music.ConversionMode
@@ -86,6 +88,16 @@ data class SheetConverterState(
     val mode: ConversionMode = ConversionMode.TRANSPOSE,
     val keyWasDetected: Boolean = false,
     val markConverted: Boolean = true,
+    /** Which voice the progression is heard on. */
+    val instrument: Instrument = Instrument.PIANO,
+    /** How fast, in beats per minute, at two beats a chord. */
+    val tempo: Int = 90,
+    /** Whether the sounded chords are the page's own or the converted ones. */
+    val playConverted: Boolean = true,
+    val playing: Boolean = false,
+    /** Pages in the PDF this page came from, or 0 when it came from an image. */
+    val pdfPageCount: Int = 0,
+    val pdfPage: Int = 0,
     val markingColor: MarkingColor = MarkingColor.VIOLET,
     val editorOpen: Boolean = false,
     /** What the chord picker will write to, and null when it is not open. */
@@ -146,6 +158,28 @@ data class SheetConverterState(
                 entries.none { it.enabled && overlaps(it.bounds, candidate.bounds) }
         } + rejectedCount
 
+    /**
+     * The chords to sound, in the order a player would read them.
+     *
+     * Sorted down the page and then across it, banded by roughly a chord's own height so a
+     * row stays a row even though its symbols do not sit at exactly the same height.
+     */
+    val playbackChords: List<Chord>
+        get() {
+            val band = ((typicalChordBounds?.height() ?: 40) * 1.6f).coerceAtLeast(1f)
+            val ordered = conversions
+                .filter { (entry, _) -> entry.enabled }
+                .sortedWith(
+                    compareBy(
+                        { (entry, _) -> (entry.bounds.centerY() / band).toInt() },
+                        { (entry, _) -> entry.bounds.left },
+                    ),
+                )
+            return ordered.map { (entry, conversion) ->
+                if (playConverted) conversion.converted else entry.original
+            }
+        }
+
     /** The size a chord occupies on this page, used to turn a tap into a box. */
     val typicalChordBounds: Rect?
         get() = entries.map { it.bounds }.takeIf { it.isNotEmpty() }?.let { boxes ->
@@ -182,10 +216,15 @@ data class SheetConverterState(
 class SheetConverterViewModel(application: Application) : AndroidViewModel(application) {
 
     private val recognizer = SheetChordRecognizer()
+    private val playerLazy = lazy { SheetPlayer(application) }
+    private val player by playerLazy
+    /** Kept so another page of the same PDF can be opened without picking the file again. */
+    private var sourceUri: Uri? = null
     private val _state = MutableStateFlow(SheetConverterState())
     val state: StateFlow<SheetConverterState> = _state.asStateFlow()
 
-    fun loadImage(uri: Uri) {
+    fun loadImage(uri: Uri, page: Int = 0) {
+        sourceUri = uri
         viewModelScope.launch {
             _state.update {
                 it.copy(
@@ -202,7 +241,11 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 )
             }
             val context = getApplication<Application>()
-            val bitmap = withContext(Dispatchers.IO) { ImageIo.loadBitmap(context, uri) }
+            stopPlayback()
+            val pages = withContext(Dispatchers.IO) {
+                if (ImageIo.isPdf(context, uri)) ImageIo.pdfPageCount(context, uri) else 0
+            }
+            val bitmap = withContext(Dispatchers.IO) { ImageIo.loadBitmap(context, uri, page = page) }
             if (bitmap == null) {
                 _state.update {
                     it.copy(stage = ConverterStage.EMPTY, message = "이미지를 열 수 없습니다.")
@@ -241,6 +284,8 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
                 current.copy(
                     stage = ConverterStage.READY,
                     sourceBitmap = bitmap,
+                    pdfPageCount = pages,
+                    pdfPage = page,
                     entries = entries,
                     missed = scan.missed,
                     sourceKey = detectedKey ?: current.sourceKey,
@@ -507,6 +552,75 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
         )
     }
 
+    // --- hearing it ---------------------------------------------------------
+
+    fun setInstrument(instrument: Instrument) {
+        _state.update { it.copy(instrument = instrument) }
+        if (_state.value.playing) restartPlayback()
+    }
+
+    fun setTempo(bpm: Int) {
+        _state.update { it.copy(tempo = bpm) }
+        if (_state.value.playing) restartPlayback()
+    }
+
+    fun setPlayConverted(converted: Boolean) {
+        _state.update { it.copy(playConverted = converted) }
+        if (_state.value.playing) restartPlayback()
+    }
+
+    fun togglePlayback() {
+        if (_state.value.playing) stopPlayback() else startPlayback()
+    }
+
+    private fun restartPlayback() {
+        stopPlayback()
+        startPlayback()
+    }
+
+    private fun startPlayback() {
+        val current = _state.value
+        val chords = current.playbackChords
+        if (chords.isEmpty()) {
+            _state.update { it.copy(message = "들려줄 코드가 없습니다.") }
+            return
+        }
+        val midi = MidiWriter.progression(
+            chords = chords,
+            instrument = current.instrument,
+            bpm = current.tempo,
+            beatsPerChord = BEATS_PER_CHORD,
+        )
+        val started = player.play(midi) {
+            _state.update { it.copy(playing = false) }
+        }
+        _state.update {
+            if (started) {
+                it.copy(playing = true)
+            } else {
+                it.copy(
+                    playing = false,
+                    message = "이 기기에서 소리를 낼 수 없습니다. " +
+                        "안드로이드 내장 신시사이저가 없는 기기일 수 있습니다.",
+                )
+            }
+        }
+    }
+
+    fun stopPlayback() {
+        if (playerLazy.isInitialized()) player.stop()
+        _state.update { it.copy(playing = false) }
+    }
+
+    // --- more of the same PDF -----------------------------------------------
+
+    /** Opens another page of the PDF already chosen, keeping the settings. */
+    fun openPdfPage(page: Int) {
+        val uri = sourceUri ?: return
+        if (page == _state.value.pdfPage) return
+        loadImage(uri, page)
+    }
+
     // --- output -------------------------------------------------------------
 
     fun renderResult() {
@@ -556,7 +670,11 @@ class SheetConverterViewModel(application: Application) : AndroidViewModel(appli
     }
 
     override fun onCleared() {
+        if (playerLazy.isInitialized()) player.stop()
         recognizer.close()
         super.onCleared()
     }
 }
+
+/** Two beats a chord: long enough to hear the colour, short enough to keep a page moving. */
+private const val BEATS_PER_CHORD = 2

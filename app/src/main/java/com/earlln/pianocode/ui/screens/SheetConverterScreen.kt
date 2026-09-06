@@ -37,8 +37,10 @@ import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -75,6 +77,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.earlln.pianocode.music.ConversionMode
+import com.earlln.pianocode.music.Instrument
 import com.earlln.pianocode.music.Key
 import com.earlln.pianocode.sheet.ConverterStage
 import com.earlln.pianocode.sheet.MarkingColor
@@ -109,7 +112,7 @@ private enum class ImageSource(
     ),
     FILES(
         "파일에서 찾기",
-        "내 파일, 드라이브, 다운로드 폴더의 이미지를 고릅니다.",
+        "내 파일, 드라이브, 다운로드 폴더의 이미지나 PDF 악보를 고릅니다.",
         Icons.Filled.Folder,
     ),
     CAMERA(
@@ -177,7 +180,7 @@ fun SheetConverterScreen(
                     pickFromApp.launch(Intent.createChooser(intent, "앱에서 악보 찾기"))
                 }
 
-                ImageSource.FILES -> openDocument.launch(arrayOf("image/*"))
+                ImageSource.FILES -> openDocument.launch(arrayOf("image/*", "application/pdf"))
 
                 ImageSource.CAMERA -> {
                     val uri = ImageIo.createCaptureUri(context)
@@ -282,12 +285,12 @@ fun SheetConverterScreen(
                         Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            if (state.sourceBitmap == null) "악보 이미지 선택" else "다른 이미지 선택",
+                            if (state.sourceBitmap == null) "악보 이미지·PDF 선택" else "다른 악보 선택",
                         )
                     }
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "갤러리 앱(사진·앨범·스토리), 파일, 카메라 중에서 고를 수 있습니다.",
+                        "갤러리 앱(사진·앨범·스토리), 파일, 카메라 중에서 고를 수 있고 PDF 악보도 됩니다.",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -383,6 +386,31 @@ fun SheetConverterScreen(
                             onSave = { viewModel.saveResult {} },
                         )
                     }
+                }
+            }
+
+            if (state.pdfPageCount > 1) {
+                item {
+                    Spacer(Modifier.height(20.dp))
+                    PdfPagePicker(
+                        pageCount = state.pdfPageCount,
+                        page = state.pdfPage,
+                        onSelect = viewModel::openPdfPage,
+                    )
+                }
+            }
+
+            if (state.entries.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(20.dp))
+                    PlaybackCard(
+                        state = state,
+                        onInstrument = viewModel::setInstrument,
+                        onTempo = viewModel::setTempo,
+                        onPlayConverted = viewModel::setPlayConverted,
+                        onToggle = viewModel::togglePlayback,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
                 }
             }
         }
@@ -791,7 +819,7 @@ private fun ImageSourceSheet(
     ) {
         Column(Modifier.padding(bottom = 28.dp)) {
             Text(
-                "악보 이미지 가져오기",
+                "악보 가져오기",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 4.dp),
@@ -954,3 +982,141 @@ private fun HowToCard(modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * Plays the page's chords back, on a voice of the reader's choosing.
+ *
+ * What is heard is the chord progression, not the notated music: the app reads chord
+ * symbols and nothing else off the page, so there are no note heads and no rhythm to
+ * play. Every chord gets the same two beats, which is enough to hear whether a
+ * transposition sits where the singer wants it.
+ */
+@Composable
+private fun PlaybackCard(
+    state: SheetConverterState,
+    onInstrument: (Instrument) -> Unit,
+    onTempo: (Int) -> Unit,
+    onPlayConverted: (Boolean) -> Unit,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(Modifier.padding(vertical = 16.dp)) {
+            Text(
+                "악기로 들어보기",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Text(
+                "악보에서 읽은 코드를 순서대로 두 박씩 울려 줍니다. " +
+                    "음표와 박자가 아니라 코드 진행을 들려주는 기능입니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+
+            Spacer(Modifier.height(8.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+            ) {
+                items(Instrument.entries.toList(), key = { it.name }) { instrument ->
+                    FilterChip(
+                        selected = instrument == state.instrument,
+                        onClick = { onInstrument(instrument) },
+                        label = { Text(instrument.koreanName) },
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+            ) {
+                items(TEMPOS, key = { it }) { bpm ->
+                    FilterChip(
+                        selected = bpm == state.tempo,
+                        onClick = { onTempo(bpm) },
+                        label = { Text("${bpm}bpm") },
+                    )
+                }
+            }
+
+            if (state.changedCount > 0) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (state.playConverted) "변환된 코드로 듣기" else "악보 그대로 듣기",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = state.playConverted,
+                        onCheckedChange = onPlayConverted,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onToggle,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Icon(
+                    if (state.playing) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(if (state.playing) "멈추기" else "${state.enabledEntries.size}개 코드 들어보기")
+            }
+        }
+    }
+}
+
+/**
+ * Lets the reader move between the pages of a PDF without picking the file again.
+ *
+ * Only shown for a PDF; a photo is one page and has nothing to move between.
+ */
+@Composable
+private fun PdfPagePicker(
+    pageCount: Int,
+    page: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth()) {
+        Text(
+            "PDF ${pageCount}쪽 중 ${page + 1}쪽",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+        ) {
+            items(pageCount) { index ->
+                FilterChip(
+                    selected = index == page,
+                    onClick = { onSelect(index) },
+                    label = { Text("${index + 1}") },
+                )
+            }
+        }
+    }
+}
+
+/** Speeds worth offering: slow enough to follow, quick enough to hear the shape. */
+private val TEMPOS = listOf(60, 80, 100, 120)

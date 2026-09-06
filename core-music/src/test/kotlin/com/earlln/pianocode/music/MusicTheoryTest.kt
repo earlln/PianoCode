@@ -515,3 +515,77 @@ class FingeringTest {
         assertTrue(left.maxOf { it.midi } < right.minOf { it.midi })
     }
 }
+
+class MidiWriterTest {
+
+    private fun chords(vararg symbols: String) = symbols.map { ChordParser.parse(it)!! }
+
+    private fun ByteArray.ascii(from: Int, length: Int) =
+        String(copyOfRange(from, from + length), Charsets.US_ASCII)
+
+    private fun ByteArray.int32(at: Int) =
+        (this[at].toInt() and 0xFF shl 24) or (this[at + 1].toInt() and 0xFF shl 16) or
+            (this[at + 2].toInt() and 0xFF shl 8) or (this[at + 3].toInt() and 0xFF)
+
+    @Test
+    fun `writes a header a player will recognise`() {
+        val bytes = MidiWriter.progression(chords("C", "G"))
+        assertEquals("MThd", bytes.ascii(0, 4))
+        assertEquals(6, bytes.int32(4))
+        assertEquals(0, bytes[8].toInt())   // format 0
+        assertEquals(0, bytes[9].toInt())
+        assertEquals(1, bytes[11].toInt())  // one track
+        assertEquals("MTrk", bytes.ascii(14, 4))
+    }
+
+    @Test
+    fun `the declared track length matches what follows it`() {
+        val bytes = MidiWriter.progression(chords("C", "Am7", "F", "G7"))
+        assertEquals(bytes.size - 22, bytes.int32(18))
+    }
+
+    @Test
+    fun `every note started is stopped`() {
+        val bytes = MidiWriter.progression(chords("Cmaj7", "Dm7", "G7"))
+        val ons = bytes.count { it.toInt() and 0xFF == 0x90 }
+        val offs = bytes.count { it.toInt() and 0xFF == 0x80 }
+        // Four notes in each of three sevenths.
+        assertEquals(12, ons)
+        assertEquals(12, offs)
+    }
+
+    @Test
+    fun `the chosen instrument is asked for`() {
+        val bytes = MidiWriter.progression(chords("C"), instrument = Instrument.FLUTE)
+        val at = bytes.indexOfFirst { it.toInt() and 0xFF == 0xC0 }
+        assertTrue(at > 0)
+        assertEquals(Instrument.FLUTE.program, bytes[at + 1].toInt())
+    }
+
+    @Test
+    fun `it ends where a file must`() {
+        val bytes = MidiWriter.progression(chords("C"))
+        val tail = bytes.copyOfRange(bytes.size - 3, bytes.size)
+        assertEquals(listOf(0xFF, 0x2F, 0x00), tail.map { it.toInt() and 0xFF })
+    }
+
+    @Test
+    fun `an empty progression still makes a valid file`() {
+        val bytes = MidiWriter.progression(emptyList())
+        assertEquals("MThd", bytes.ascii(0, 4))
+        assertEquals(bytes.size - 22, bytes.int32(18))
+    }
+
+    @Test
+    fun `long gaps survive the seven-bit delta encoding`() {
+        // Sixteen beats a chord pushes the delta past 127 ticks, where the encoding has to
+        // spill into a second byte; a broken spill shows up as a wrong track length.
+        val bytes = MidiWriter.progression(chords("C", "G"), beatsPerChord = 16)
+        assertEquals(bytes.size - 22, bytes.int32(18))
+    }
+
+    @Test
+    fun `it reports how long it will take`() {
+        assertEquals(8_000L, MidiWriter.durationMillis(chordCount = 4, bpm = 60, beatsPerChord = 2))
+    }
+}

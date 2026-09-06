@@ -5,7 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -13,10 +16,65 @@ import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
+import kotlin.math.roundToInt
 import java.io.FileOutputStream
 
 /** Loading, saving and sharing the sheet images the converter works on. */
 object ImageIo {
+
+    /** True when [uri] holds a PDF, by what the provider says or by the file's own header. */
+    fun isPdf(context: Context, uri: Uri): Boolean {
+        if (context.contentResolver.getType(uri) == "application/pdf") return true
+        // Providers do not always declare a type, and a name is not evidence, so read the
+        // five bytes every PDF starts with.
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val header = ByteArray(5)
+                stream.read(header) == 5 && String(header, Charsets.US_ASCII) == "%PDF-"
+            } ?: false
+        }.getOrDefault(false)
+    }
+
+    /** How many pages [uri] has, or 0 when it is not a PDF this device can open. */
+    fun pdfPageCount(context: Context, uri: Uri): Int = runCatching {
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+            PdfRenderer(descriptor).use { it.pageCount }
+        } ?: 0
+    }.getOrDefault(0)
+
+    /**
+     * Draws one page of a PDF at working size.
+     *
+     * A PDF is a drawing rather than a photograph, so it is rendered at the size wanted
+     * instead of being decoded and shrunk — the type comes out as sharp as the page allows,
+     * which is the whole reason a PDF beats a photo of the same sheet.
+     */
+    private fun renderPdfPage(
+        context: Context,
+        uri: Uri,
+        page: Int,
+        maxDimension: Int,
+    ): Bitmap? = runCatching {
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                if (renderer.pageCount == 0) return@use null
+                renderer.openPage(page.coerceIn(0, renderer.pageCount - 1)).use { pdfPage ->
+                    val scale = maxDimension.toFloat() / maxOf(pdfPage.width, pdfPage.height)
+                    val width = (pdfPage.width * scale).roundToInt().coerceAtLeast(1)
+                    val height = (pdfPage.height * scale).roundToInt().coerceAtLeast(1)
+                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    // A PDF page is transparent where nothing is drawn. The recogniser and
+                    // the renderer both expect paper, so it is given some.
+                    Canvas(bitmap).drawColor(Color.WHITE)
+                    pdfPage.render(
+                        bitmap, null, null,
+                        PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
+                    )
+                    bitmap
+                }
+            }
+        }
+    }.getOrNull()
 
     /**
      * Working size for a page.
@@ -33,8 +91,14 @@ object ImageIo {
      * was actually taken. Cameras record orientation in EXIF rather than in the pixels, so
      * skipping that step would hand the recogniser a sideways page.
      */
-    fun loadBitmap(context: Context, uri: Uri, maxDimension: Int = MAX_DIMENSION): Bitmap? {
+    fun loadBitmap(
+        context: Context,
+        uri: Uri,
+        maxDimension: Int = MAX_DIMENSION,
+        page: Int = 0,
+    ): Bitmap? {
         val resolver = context.contentResolver
+        if (isPdf(context, uri)) return renderPdfPage(context, uri, page, maxDimension)
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
