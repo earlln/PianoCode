@@ -1,8 +1,5 @@
 package com.earlln.pianocode.ui.screens
 
-import android.content.ActivityNotFoundException
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,6 +32,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +48,8 @@ import com.earlln.pianocode.score.ReadingStage
 import com.earlln.pianocode.score.ScorePlayerState
 import com.earlln.pianocode.score.ScorePlayerViewModel
 import com.earlln.pianocode.ui.components.SectionHeader
+import com.earlln.pianocode.ui.components.SheetSourcePicker
+import com.earlln.pianocode.ui.components.rememberSheetSourceOpener
 
 /**
  * Plays the music written on a page.
@@ -64,9 +66,23 @@ fun ScorePlayerScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
-    val open = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri -> uri?.let(viewModel::load) }
+    // The same ways in as the converter screen: recent photos, the phone's own gallery
+    // app with its albums, a folder, or the camera.
+    var showSources by remember { mutableStateOf(false) }
+    val open = rememberSheetSourceOpener(
+        onPicked = { viewModel.load(it) },
+        onMessage = viewModel::showMessage,
+    )
+
+    if (showSources) {
+        SheetSourcePicker(
+            onDismiss = { showSources = false },
+            onSelect = {
+                showSources = false
+                open(it)
+            },
+        )
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -81,19 +97,19 @@ fun ScorePlayerScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Button(
-                    onClick = {
-                        try {
-                            open.launch(arrayOf("image/*", "application/pdf"))
-                        } catch (error: ActivityNotFoundException) {
-                            viewModel.showMessage("이 기기에서 파일을 고를 앱을 찾지 못했습니다.")
-                        }
-                    },
+                    onClick = { showSources = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Filled.MusicNote, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (state.page == null) "악보 사진·PDF 열기" else "다른 악보 열기")
+                    Text(if (state.page == null) "악보 가져오기" else "다른 악보 가져오기")
                 }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "갤러리 앱(사진·앨범·스토리), 파일, 카메라 중에서 고를 수 있고 PDF 악보도 됩니다.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
