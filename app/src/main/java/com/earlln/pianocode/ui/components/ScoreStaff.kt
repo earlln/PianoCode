@@ -14,8 +14,6 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import com.earlln.pianocode.music.omr.Clef
 import com.earlln.pianocode.music.omr.TimedEvent
 
@@ -25,18 +23,22 @@ data class StaffTheme(
     val playing: Color,
     val selected: Color,
     val faint: Color,
+    val lyric: Color,
 )
 
+/** A word of the page's own text, placed where the page printed it. */
+data class StaffWord(val text: String, val centreX: Float)
+
 /**
- * Draws the reading back as music.
+ * Draws one staff of the reading back as music, laid out the way the page lays it out.
  *
- * The point of this is not to be beautiful engraving — it is to be **checkable**. Somebody
- * whose playback sounded wrong needs to see, against the page in their hand, which note
- * the app thinks is there; so every note is drawn where it was read, in the order it will
- * be played, with its name under it. A wrong note is then obvious rather than deduced.
+ * Time was the horizontal axis here once, and it made the reading unfindable: a page of
+ * four systems came out as one endless line with nothing to match against the paper in
+ * your hand. Now each staff keeps its own line and every note sits at the fraction across
+ * the page it was read from, so the drawing and the photograph break in the same places.
  *
- * Time is the horizontal axis, which is what lets the playhead sweep across it: an event
- * twice as long takes twice the width, so the sweep matches what is heard.
+ * The point of it is to be **checkable**, not to be beautiful engraving: a wrong note
+ * should be obvious against the original rather than deduced from the sound.
  */
 @Suppress("LongParameterList")
 fun DrawScope.drawStaffLine(
@@ -44,22 +46,21 @@ fun DrawScope.drawStaffLine(
     clef: Clef,
     theme: StaffTheme,
     space: Float,
-    left: Float,
     top: Float,
-    quartersToX: (Double) -> Float,
+    pageToX: (Double) -> Float,
     selectedId: Int?,
     playingIds: Set<Int>,
     showNames: Boolean,
+    words: List<StaffWord> = emptyList(),
 ) {
     val bottom = top + space * 4
     val lineWidth = (space * 0.07f).coerceAtLeast(1f)
 
-    // The five lines run the whole width, as they do on a page.
     for (line in 0..4) {
         val y = top + line * space
         drawLine(
             color = theme.faint,
-            start = Offset(left, y),
+            start = Offset(0f, y),
             end = Offset(size.width, y),
             strokeWidth = lineWidth,
         )
@@ -67,7 +68,7 @@ fun DrawScope.drawStaffLine(
 
     for (timed in events) {
         val event = timed.event
-        val x = quartersToX(timed.startQuarters)
+        val x = pageToX(event.x)
         val colour = when {
             event.id in playingIds -> theme.playing
             event.id == selectedId -> theme.selected
@@ -91,8 +92,8 @@ fun DrawScope.drawStaffLine(
                 drawName(
                     text = event.pitches.joinToString("") { it.note.prettyName },
                     x = x,
-                    y = bottom + space * 2.4f,
-                    space = space,
+                    y = bottom + space * 1.9f,
+                    size = space * 1.0f,
                     colour = colour,
                 )
             }
@@ -100,11 +101,22 @@ fun DrawScope.drawStaffLine(
         if (event.id == selectedId) {
             drawRect(
                 color = theme.selected,
-                topLeft = Offset(x - space * 1.1f, top - space * 2.2f),
-                size = Size(space * 2.2f, space * 8.4f),
+                topLeft = Offset(x - space * 1.3f, top - space * 2.2f),
+                size = Size(space * 2.6f, space * 8.4f),
                 style = Stroke(width = lineWidth * 2),
             )
         }
+    }
+
+    // The page's own words, under the staff they are sung to.
+    for (word in words) {
+        drawName(
+            text = word.text,
+            x = word.centreX,
+            y = bottom + space * (if (showNames) 3.4f else 2.4f),
+            size = space * 1.05f,
+            colour = theme.lyric,
+        )
     }
 }
 
@@ -221,12 +233,12 @@ private fun DrawScope.drawRest(quarters: Double, x: Float, top: Float, space: Fl
     }
 }
 
-private fun DrawScope.drawName(text: String, x: Float, y: Float, space: Float, colour: Color) {
+private fun DrawScope.drawName(text: String, x: Float, y: Float, size: Float, colour: Color) {
     drawContext.canvas.nativeCanvas.apply {
         val paint = android.graphics.Paint().apply {
             isAntiAlias = true
             color = colour.toArgb()
-            textSize = space * 1.1f
+            textSize = size
             textAlign = android.graphics.Paint.Align.CENTER
         }
         drawText(text, x, y, paint)
@@ -236,14 +248,31 @@ private fun DrawScope.drawName(text: String, x: Float, y: Float, space: Float, c
 /** Where each event was drawn, so a tap can be matched back to the event it landed on. */
 data class EventHit(val id: Int, val bounds: Rect)
 
-/** Turns a tap into the event nearest it, when the tap is close enough to mean one. */
-fun Modifier.tapEvents(hits: () -> List<EventHit>, onEvent: (Int?) -> Unit): Modifier =
-    pointerInput(Unit) {
-        detectTapGestures { position ->
-            val hit = hits().firstOrNull { it.bounds.contains(position) }
-            onEvent(hit?.id)
-        }
-    }
+/** What a tap on a staff landed on. */
+sealed interface StaffTap {
+    /** A note or rest that is already there. */
+    data class OnEvent(val id: Int) : StaffTap
 
-/** A comfortable staff size for a phone: big enough to read a ledger note at a glance. */
-val StaffSpace: Dp = 11.dp
+    /** A line or space, counted from the bottom line, with nothing written on it. */
+    data class OnPosition(val step: Int) : StaffTap
+}
+
+/**
+ * Reads a tap on a staff as either the note under the finger or the place it landed.
+ *
+ * Both readings are useful and neither needs a keyboard: tap a note to pick it out, then
+ * tap the line you meant and it moves there. That is the whole repair for the commonest
+ * mistake — a head read one line off — done with two taps and no typing.
+ */
+fun Modifier.tapStaff(
+    hits: () -> List<EventHit>,
+    stepAt: (Float) -> Int,
+    onTap: (StaffTap) -> Unit,
+): Modifier = pointerInput(Unit) {
+    detectTapGestures { position ->
+        val hit = hits().firstOrNull { it.bounds.contains(position) }
+        onTap(
+            if (hit != null) StaffTap.OnEvent(hit.id) else StaffTap.OnPosition(stepAt(position.y)),
+        )
+    }
+}

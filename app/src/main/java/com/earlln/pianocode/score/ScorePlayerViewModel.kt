@@ -43,6 +43,9 @@ data class ScorePlayerState(
     /** The event the reader has picked out to correct, if any. */
     val selectedId: Int? = null,
     val showNames: Boolean = true,
+    val showLyrics: Boolean = true,
+    /** The page's own words, gathered under the staff each belongs to. */
+    val lyrics: Map<Int, List<PageText>> = emptyMap(),
     val edited: Boolean = false,
     val pdfPageCount: Int = 0,
     val pdfPage: Int = 0,
@@ -80,6 +83,7 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private val playerLazy = lazy { SheetPlayer(application, fileName = "score.mid") }
     private val player: SheetPlayer get() = playerLazy.value
+    private val textReader by lazy { PageTextReader() }
     private var sourceUri: Uri? = null
     private var playhead: Job? = null
 
@@ -116,10 +120,33 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
                 it.copy(
                     stage = ReadingStage.DONE,
                     score = score,
+                    selectedId = null,
+                    edited = false,
+                    lyrics = emptyMap(),
                     message = if (score.isEmpty) NOTHING_READ else null,
                 )
             }
+            readLyrics(bitmap, score)
         }
+    }
+
+    /**
+     * Reads the page's own words and files them under the staff each belongs to.
+     *
+     * Done after the notes rather than alongside them, and allowed to fail quietly: words
+     * under the staff help a reader find their place, and a page that gives none is still
+     * perfectly playable.
+     */
+    private suspend fun readLyrics(bitmap: Bitmap, score: ReadScore) {
+        if (score.staves.isEmpty()) return
+        val found = runCatching { textReader.read(bitmap) }.getOrNull() ?: return
+        val lyrics = Lyrics.assign(
+            text = found,
+            staffBottoms = score.staves.map { it.staff.bottom },
+            staffTops = score.staves.map { it.staff.top },
+            space = score.staves.first().staff.space,
+        )
+        _state.update { it.copy(lyrics = lyrics) }
     }
 
     fun openPdfPage(page: Int) {
@@ -133,6 +160,38 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun select(id: Int?) = _state.update { it.copy(selectedId = if (it.selectedId == id) null else id) }
 
     fun setShowNames(show: Boolean) = _state.update { it.copy(showNames = show) }
+
+    fun setShowLyrics(show: Boolean) = _state.update { it.copy(showLyrics = show) }
+
+    /**
+     * Puts the picked note on the line or space that was tapped.
+     *
+     * This is the repair without a keyboard: pick the note, tap where it belongs. The
+     * position is what the staff is written in, so the pitch follows from the clef and
+     * whatever the key signature says that letter is.
+     */
+    fun setSelectedToStep(step: Int) {
+        val current = _state.value
+        val score = current.score ?: return
+        val event = current.selected ?: return
+        if (event.isRest) return
+        val clef = score.staves.getOrNull(event.staffIndex)?.clef ?: return
+        val from = clef.stepOf(event.pitches.first())
+        moveSelectedByStep(step - from)
+    }
+
+    /** Steps the picked note along the reading, so nothing depends on hitting it exactly. */
+    fun selectNeighbour(forward: Boolean) {
+        val events = _state.value.score?.events.orEmpty()
+        if (events.isEmpty()) return
+        val at = events.indexOfFirst { it.id == _state.value.selectedId }
+        val next = when {
+            at < 0 -> 0
+            forward -> (at + 1).coerceAtMost(events.lastIndex)
+            else -> (at - 1).coerceAtLeast(0)
+        }
+        _state.update { it.copy(selectedId = events[next].id) }
+    }
 
     /** Moves the picked note up or down the staff, which fixes a head read a line off. */
     fun moveSelectedByStep(steps: Int) = edit { score, id ->
@@ -277,6 +336,7 @@ class ScorePlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     override fun onCleared() {
         playhead?.cancel()
+        runCatching { textReader.close() }
         if (playerLazy.isInitialized()) player.stop()
         super.onCleared()
     }
